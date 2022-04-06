@@ -14,13 +14,15 @@ class MasterSpider(scrapy.Spider):
     name = 'master'
     allowed_domains = ['yz.chsi.com.cn']
     start_urls = 'https://yz.chsi.com.cn/zsml/querySchAction.do?ssdm=&dwmc={}&mldm={}&mlmc=&yjxkdm={}&xxfs=&zymc='
-    keywords = ['南京大学','南开大学','外交学院']
+    #keywords = ['南京大学','南开大学','外交学院']
+    keywords = ['南京大学']
 
     def start_requests(self):
         for i in self.keywords:
             for j in self.get_dm():
                 major_list = self.get_major(j)
                 for k in major_list:
+                #for k in ["01", "02", "03"]:
                     url = self.start_urls.format(i, j, k)
                     yield scrapy.Request(url=url, method='GET', callback=self.parse)
 
@@ -36,13 +38,13 @@ class MasterSpider(scrapy.Spider):
     def call_detail(self, response):
         item = response.meta["item"]
         Subject1 = response.xpath("//div[@class='zsml-result']/table/tbody/tr[1]/td[1]/text()").extract()
-        item["Subject1"] = "".join(Subject1).replace('\r', '').replace('\n', '').replace('\r\n', '').replace('\t', '').replace(u'\u3000', u'').replace(u'\xa0', u'').replace(' ', '').strip()
+        item["Subject1"] = self.trans_data(Subject1)
         Subject2 = response.xpath("//div[@class='zsml-result']/table/tbody/tr[1]/td[2]/text()").extract()
-        item["Subject2"] = "".join(Subject2).replace('\r', '').replace('\n', '').replace('\r\n', '').replace('\t', '').replace(u'\u3000', u'').replace(u'\xa0', u'').replace(' ', '').strip()
+        item["Subject2"] = self.trans_data(Subject2)
         Subject3 = response.xpath("//div[@class='zsml-result']/table/tbody/tr[1]/td[3]/text()").extract()
-        item["Subject3"] = "".join(Subject3).replace('\r', '').replace('\n', '').replace('\r\n', '').replace('\t', '').replace(u'\u3000', u'').replace(u'\xa0', u'').replace(' ', '').strip()
+        item["Subject3"] = self.trans_data(Subject3)
         Subject4 = response.xpath("//div[@class='zsml-result']/table/tbody/tr[1]/td[4]/text()").extract()
-        item["Subject4"] = "".join(Subject4).replace('\r', '').replace('\n', '').replace('\r\n', '').replace('\t', '').replace(u'\u3000', u'').replace(u'\xa0', u'').replace(' ', '').strip()
+        item["Subject4"] = self.trans_data(Subject4)
         item["University"] = response.xpath("//table[@class='zsml-condition']/tbody/tr[1]/td[2]/text()").extract_first()
         item["ExamType"] = response.xpath("//table[@class='zsml-condition']//tbody/tr[1]/td[4]/text()").extract_first()
         item["College"] = response.xpath("//table[@class='zsml-condition']//tbody/tr[2]/td[2]/text()").extract_first()
@@ -53,6 +55,21 @@ class MasterSpider(scrapy.Spider):
         item["StudentNo"] = response.xpath("//table[@class='zsml-condition']//tbody/tr[4]/td[4]/text()").extract_first()
         item["Content"] = response.xpath("//table[@class='zsml-condition']//tbody/tr[5]/td[1]/text()").extract_first()
         yield item
+
+
+    def trans_data(self, targets):
+        result_list = []
+        for target in targets:
+            if target.strip().replace('\r\n', '').strip() not in result_list:
+                data = target.strip().replace('\r\n', '')
+                if data is not "":
+                    result_list.append(data)
+        if len(result_list) > 1:
+            result = " or ".join(result_list)
+        else:
+            result = result_list[0]
+        return result
+ 
 
 
     def get_dm(self):
