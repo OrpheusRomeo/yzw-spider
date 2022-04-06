@@ -12,7 +12,7 @@ from itemadapter import ItemAdapter
 
 class YzwPipeline(object):
     def __init__(self):
-        path_yzw = './result/csv/shuoshimulu.csv'
+        path_yzw = './result/csv/master_directory.csv'
         self.file_yzw = open(path_yzw,'a+',encoding='utf-8')
         self.writer_yzw = csv.writer(self.file_yzw)
 
@@ -28,7 +28,7 @@ class YzwPipeline(object):
 
 class JsonPipeline(object):
     def __init__(self):
-        self.file = codecs.open('./result/json/shuoshimulu.json', 'w', encoding='utf-8')
+        self.file = codecs.open('./result/json/master_directory.json', 'w', encoding='utf-8')
     def process_item(self, item, spider):
         line = json.dumps(dict(item), ensure_ascii=False) + "\n"
         self.file.write(line)

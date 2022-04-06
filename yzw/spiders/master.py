@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
 import scrapy
-import time
-from yzw.items import shuoshiItem
-#from yzw.utils import utils
+from yzw.items import MasterItem
 
-class ShuoshiSpider(scrapy.Spider):
+class MasterSpider(scrapy.Spider):
 # 示例 南京大学 02 0201 理论经济学
 #issdm: 32
 #dwmc: 南京大学
@@ -13,7 +11,7 @@ class ShuoshiSpider(scrapy.Spider):
 #yjxkdm: 0201
 #xxfs: 
 #zymc: 
-    name = 'shuoshi'
+    name = 'master'
     allowed_domains = ['yz.chsi.com.cn']
     start_urls = 'https://yz.chsi.com.cn/zsml/querySchAction.do?ssdm=&dwmc={}&mldm={}&mlmc=&yjxkdm={}&xxfs=&zymc='
     keywords = ['南京大学','南开大学','外交学院']
@@ -28,7 +26,7 @@ class ShuoshiSpider(scrapy.Spider):
 
     def parse(self, response):
         domain = "https://yz.chsi.com.cn"
-        item = shuoshiItem()
+        item = MasterItem()
         url_list = response.xpath("//tbody/tr/td[8]/a/@href").extract()
         for i in url_list:
             new_url = domain+i
@@ -77,7 +75,7 @@ class ShuoshiSpider(scrapy.Spider):
  
 
 if __name__=='__main__':
-    test = ShuoshiSpider()
+    test = MasterSpider()
     dl = '02'
     major_list = test.get_major(dl)
     print(major_list)

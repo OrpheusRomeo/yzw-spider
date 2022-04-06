@@ -11,7 +11,7 @@ class YzwItem(scrapy.Item):
     # name = scrapy.Field()
     pass
 
-class shuoshiItem(scrapy.Item):
+class MasterItem(scrapy.Item):
     # define the fields for your item here like:
     # name = scrapy.Field()
     University = scrapy.Field()
