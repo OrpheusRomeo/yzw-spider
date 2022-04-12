@@ -65,6 +65,7 @@ ROBOTSTXT_OBEY = True
 ITEM_PIPELINES = {
     'yzw.pipelines.YzwPipeline': 300,
     'yzw.pipelines.JsonPipeline': 300,
+    'yzw.pipelines.ExcelPipeline': 300,
 }
 
 # Enable and configure the AutoThrottle extension (disabled by default)

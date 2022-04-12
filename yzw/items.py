@@ -13,7 +13,24 @@ class YzwItem(scrapy.Item):
 
 class MasterItem(scrapy.Item):
     # define the fields for your item here like:
-    # name = scrapy.Field()
+    University = scrapy.Field()
+    College = scrapy.Field()
+    Major = scrapy.Field()
+    ResearchInterests = scrapy.Field()
+    Teacher = scrapy.Field()
+    StudentNo = scrapy.Field()
+    StudyType = scrapy.Field()
+    ExamType = scrapy.Field()
+    Content = scrapy.Field()
+    Subject1 = scrapy.Field()
+    Subject2 = scrapy.Field()
+    Subject3 = scrapy.Field()
+    Subject4 = scrapy.Field()
+    Link = scrapy.Field()
+    pass
+
+class DoctorItem(scrapy.Item):
+    # define the fields for your item here like:
     University = scrapy.Field()
     College = scrapy.Field()
     Major = scrapy.Field()

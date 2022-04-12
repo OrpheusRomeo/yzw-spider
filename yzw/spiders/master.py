@@ -3,26 +3,26 @@ import scrapy
 from yzw.items import MasterItem
 
 class MasterSpider(scrapy.Spider):
-# 示例 南京大学 02 0201 理论经济学
-#issdm: 32
-#dwmc: 南京大学
-#mldm: 02
-#mlmc: 
-#yjxkdm: 0201
-#xxfs: 
-#zymc: 
+    # 示例 南京大学 02 0201 理论经济学
+    #issdm: 32
+    #dwmc: 南京大学
+    #mldm: 02
+    #mlmc: 
+    #yjxkdm: 0201
+    #xxfs: 
+    #zymc: 
     name = 'master'
     allowed_domains = ['yz.chsi.com.cn']
     start_urls = 'https://yz.chsi.com.cn/zsml/querySchAction.do?ssdm=&dwmc={}&mldm={}&mlmc=&yjxkdm={}&xxfs=&zymc='
-    #keywords = ['南京大学','南开大学','外交学院']
-    keywords = ['南京大学']
+    keywords = ['南京大学','南开大学','外交学院']
+    #keywords = ['南京大学']
 
     def start_requests(self):
         for i in self.keywords:
             for j in self.get_dm():
                 major_list = self.get_major(j)
                 for k in major_list:
-                #for k in ["01", "02", "03"]:
+                #for k in ["02"]:
                     url = self.start_urls.format(i, j, k)
                     yield scrapy.Request(url=url, method='GET', callback=self.parse)
 

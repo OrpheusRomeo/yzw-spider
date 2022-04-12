@@ -9,16 +9,19 @@ import csv
 import codecs
 import json
 from itemadapter import ItemAdapter
+from xlutils.copy import copy
+from .utils.excel_handler import ExcelHandler
+
 
 class YzwPipeline(object):
     def __init__(self):
-        path_yzw = './result/csv/master_directory.csv'
-        self.file_yzw = open(path_yzw,'a+',encoding='utf-8')
-        self.writer_yzw = csv.writer(self.file_yzw)
+        path = './result/csv/master_directory.csv'
+        self.file = open(path,'a+',encoding='utf-8')
+        self.writer = csv.writer(self.file)
 
     def process_item(self, item, spider):
         print(spider.name)
-        self.writer_yzw.writerow(
+        self.writer.writerow(
             (item["University"],item["ExamType"],item["College"],item["Major"],item["ResearchInterests"],item["StudyType"],item["Teacher"],item["StudentNo"],item["Subject1"],item["Subject2"],item["Subject3"],item["Subject4"],item["Content"],item["Link"]))
         return item
 
@@ -35,3 +38,25 @@ class JsonPipeline(object):
         return item
     def spider_closed(self, spider):
         self.file.close()
+
+class ExcelPipeline(object):
+    def __init__(self):
+        self.file = './result/xlsx/master_directory.xlsx'
+        self.head = ['Link', 'Subject1', 'Subject2', 'Subject3', 'Subject4', 'University', 'ExamType', 'College', 'Major', 'Studytype', 'ResearchInterests', 'Teacher', 'StudentNo', 'Content']
+        self.test = ExcelHandler()
+        self.excel = self.test.init_excel(self.file, 'sheet1', self.head) 
+
+    def process_item(self, item, spider):
+        # 调整顺序
+        has_sheet = self.test.has_sheet(self.file, item['University'])
+        if has_sheet is False:
+            self.test.add_sheet(self.file, item['University'], self.head)
+            self.test.append_data(self.file, item['University'], item)
+        else:
+            self.test.append_data(self.file, item['University'], item)
+        pass
+
+    def close_spider(self, spider):
+        pass
+        
+
