@@ -11,6 +11,7 @@ import json
 from itemadapter import ItemAdapter
 from xlutils.copy import copy
 from .utils.excel_handler import ExcelHandler
+from .utils.csv_handler import CsvHandler
 
 
 class YzwPipeline(object):
@@ -25,8 +26,22 @@ class YzwPipeline(object):
             (item["University"],item["ExamType"],item["College"],item["Major"],item["ResearchInterests"],item["StudyType"],item["Teacher"],item["StudentNo"],item["Subject1"],item["Subject2"],item["Subject3"],item["Subject4"],item["Content"],item["Link"]))
         return item
 
-    def close_spider(self,spider):
+    def close_spider(self, spider):
         self.file.close()
+
+class CsvPipeline(object):
+    def __init__(self):
+        self.path = './result/csv/master_directory1.csv'
+        self.csv_handler = CsvHandler()
+
+    def process_item(self, item, spider):
+        print(spider.name)
+        self.csv_handler.import_data(item, self.path)
+        return item
+
+    def close_spider(self, spider):
+        self.file.close()
+
 
 
 class JsonPipeline(object):
