@@ -1,48 +1,52 @@
 # -*- coding: utf-8 -*-
 import scrapy
-from yzw.items import MasterItem
+from yzw.items import DoctorItem
 
-class MasterSpider(scrapy.Spider):
-    # 示例 南京大学 02 0201 理论经济学
-    #issdm: 32
-    #dwmc: 南京大学
-    #mldm: 02
-    #mlmc: 
-    #yjxkdm: 0201
-    #xxfs: 
-    #zymc: 
-    name = 'master'
+class DoctorSpider(scrapy.Spider):
+#dwdm: 10284
+#yxsdm: 025
+#zydm: 083000
+#yjfxdm: 
+#xxfs: 
+#dsbh: 
+#_t: 1649243277226
+
+    name = 'doctor'
     allowed_domains = ['yz.chsi.com.cn']
-    start_urls = 'https://yz.chsi.com.cn/zsml/querySchAction.do?ssdm=&dwmc={}&mldm={}&mlmc=&yjxkdm={}&xxfs=&zymc='
-    #keywords = ['南京大学','南开大学','外交学院']
-    keywords = ['南京大学']
+    start_urls = "https://yz.chsi.com.cn/bsmlcx/cx/listYxsAndZyCollected?start={}&yxsdm={}&zydm={}&yjfxdm=&xxfs=&dsbh=&dwdm=&_t=1649242759688"
+    keywords = [10284]
 
     def start_requests(self):
         for i in self.keywords:
-            for j in self.get_dm():
-                major_list = self.get_major(j)
-                for k in major_list:
-                #for k in ["02"]:
-                    url = self.start_urls.format(i, j, k)
-                    yield scrapy.Request(url=url, method='GET', callback=self.parse)
+            url = self.start_urls.format(0, '', '')
+            yield scrapy.Request(url=url, method='GET', callback=self.parse)
 
     def parse(self, response):
-        domain = "https://yz.chsi.com.cn"
-        url_list = response.xpath("//tbody/tr/td[8]/a/@href").extract()
-        for i in url_list:
-            item = MasterItem()
-            new_url = domain+i
-            item["Link"] = new_url
+        item = DoctorItem()
+        json_data = json.loads(response.body.decode('utf-8'))
+        if "msg" not in json_data.keys():
+            return null
+        if "totalCount" not in json_data["msg"].keys():
+            return null
+        start = 20
+        total = json_data["msg"]["totalPage"]
+        current = json_data["msg"]["curPage"]
+        data_list = json_data["msg"]["list"]
+        if current < total:
+            for i in data_list:
+                yxsdm = i["yxsdm"]
+                yxsmc = i["yxsmc"]
+                yxszsrs = i["yxszsrs"]
+                zydm = i["zydm"]
+                zymc = i["zymc"]
+                zyzsrs = i["zyzsrs"]
+                if current < total:
+                    start = (current-0)*20
+            new_url = self.start_urls.format(start, yxsdm, zydm)
             yield scrapy.Request(url=new_url, callback=self.call_detail, meta={"item":item})
 
     def call_detail(self, response):
         item = response.meta["item"]
-        Subject1 = response.xpath("//div[@class='zsml-result']/table/tbody/tr[1]/td[1]/text()").extract()
-        item["Subject1"] = self.trans_data(Subject1)
-        Subject2 = response.xpath("//div[@class='zsml-result']/table/tbody/tr[1]/td[2]/text()").extract()
-        item["Subject2"] = self.trans_data(Subject2)
-        Subject3 = response.xpath("//div[@class='zsml-result']/table/tbody/tr[1]/td[3]/text()").extract()
-        item["Subject3"] = self.trans_data(Subject3)
         Subject4 = response.xpath("//div[@class='zsml-result']/table/tbody/tr[1]/td[4]/text()").extract()
         item["Subject4"] = self.trans_data(Subject4)
         item["University"] = response.xpath("//table[@class='zsml-condition']/tbody/tr[1]/td[2]/text()").extract_first()
@@ -54,7 +58,6 @@ class MasterSpider(scrapy.Spider):
         item["Teacher"] = response.xpath("//table[@class='zsml-condition']//tbody/tr[4]/td[2]/text()").extract_first()
         item["StudentNo"] = response.xpath("//table[@class='zsml-condition']//tbody/tr[4]/td[4]/text()").extract_first()
         item["Content"] = response.xpath("//table[@class='zsml-condition']//tbody/tr[5]/td[1]/text()").extract_first()
-        #item["Link"] = response.meta["item"]["Link"]
         yield item
 
 
@@ -73,9 +76,10 @@ class MasterSpider(scrapy.Spider):
  
 
 
-    def get_dm(self):
-        data_dict_list = [{"mc":"哲学","dm":"01"},{"mc":"经济学","dm":"02"},{"mc":"法学","dm":"03"},{"mc":"教育学","dm":"04"},{"mc":"文学","dm":"05"},{"mc":"历史学","dm":"06"},{"mc":"理学","dm":"07"},{"mc":"工学","dm":"08"},{"mc":"农学","dm":"09"},{"mc":"医学","dm":"10"},{"mc":"军事学","dm":"11"},{"mc":"管理学","dm":"12"},{"mc":"艺术学","dm":"13"},{"mc":"交叉学科","dm":"14"}]
-        data = []
+    def get_major_list(self):
+        url = "https://yz.chsi.com.cn/bsmlcx/cx/listYxsAndZyCollected?start=0&yxsdm=&zydm=&yjfxdm=&xxfs=&dsbh=&dwdm={}&_t=1649242759688".format(10284)
+        
+        data_dict_list = [] 
         for i in data_dict_list:
             data.append(i["dm"])
         return data

@@ -26,6 +26,7 @@ class MasterPipeline(object):
         self.excel = self.test.init_excel(self.excel_file, 'sheet1', self.head) 
 
     def process_item(self, item, spider):
+        #print(item)
         # 调整顺序
         # 三种文件可以根据自身需要进行舍弃, 注释代码即可        
         # 写入 csv
