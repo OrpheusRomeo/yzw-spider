@@ -18,7 +18,7 @@ class MasterPipeline(object):
     def __init__(self):
         self.path = './result/master/'
         self.name = 'master_directory'
-        self.date = '_'+ time.strftime("%Y-%m-%d")
+        self.date = '_'+ time.strftime("%Y%m%d%H%M")
         self.csv_file = self.path + self.name + self.date + '.csv'
         self.json_file = self.path + self.name + self.date + '.json'
         self.excel_file = self.path + self.name + self.date + '.xlsx'
