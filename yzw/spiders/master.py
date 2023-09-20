@@ -14,8 +14,8 @@ class MasterSpider(scrapy.Spider):
     name = 'master'
     allowed_domains = ['yz.chsi.com.cn']
     start_urls = 'https://yz.chsi.com.cn/zsml/querySchAction.do?ssdm=&dwmc={}&mldm={}&mlmc=&yjxkdm={}&xxfs=&zymc='
-    #keywords = ['南京大学','南开大学','外交学院']
-    keywords = ['南京大学']
+    keywords = ['南京大学','南开大学','外交学院','武汉大学','华中科技大学', '清华大学', '北京大学', '中科院大学', '浙江大学', '复旦大学', '上海交通大学']
+    #keywords = ['南京大学']
 
     def start_requests(self):
         for i in self.keywords:

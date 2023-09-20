@@ -7,7 +7,8 @@
 # useful for handling different item types with a single interface
 import codecs
 import json
-from itemadapter import ItemAdapter
+import time
+#from itemadapter import ItemAdapter
 from xlutils.copy import copy
 from .utils.excel_handler import ExcelHandler
 from .utils.csv_handler import CsvHandler
@@ -17,9 +18,10 @@ class MasterPipeline(object):
     def __init__(self):
         self.path = './result/master/'
         self.name = 'master_directory'
-        self.csv_file = self.path + self.name + '.csv'
-        self.json_file = self.path + self.name + '.json'
-        self.excel_file = self.path + self.name + '.xlsx'
+        self.date = '_'+ time.strftime("%Y-%m-%d")
+        self.csv_file = self.path + self.name + self.date + '.csv'
+        self.json_file = self.path + self.name + self.date + '.json'
+        self.excel_file = self.path + self.name + self.date + '.xlsx'
         self.head = ['Link', 'Subject1', 'Subject2', 'Subject3', 'Subject4', 'University', 'ExamType', 'College', 'Major', 'Studytype', 'ResearchInterests', 'Teacher', 'StudentNo', 'Content']
         self.csv_handler = CsvHandler()
         self.test = ExcelHandler()
