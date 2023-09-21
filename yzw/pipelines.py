@@ -28,15 +28,15 @@ class MasterPipeline(object):
         self.excel = self.test.init_excel(self.excel_file, 'sheet1', self.head) 
 
     def process_item(self, item, spider):
-        #print(item)
-        # 调整顺序
-        # 三种文件可以根据自身需要进行舍弃, 注释代码即可        
-        # 写入 csv
-        self.csv_handler.import_data(item, self.csv_file)
-        # 写入 json
-        file = codecs.open(self.json_file, 'a', encoding='utf-8')
-        line = json.dumps(dict(item), ensure_ascii=False) + "\n"
-        file.write(line)
+       # #print(item)
+       # # 调整顺序
+       # # 三种文件可以根据自身需要进行舍弃, 注释代码即可        
+       # # 写入 csv
+       # self.csv_handler.import_data(item, self.csv_file)
+       # # 写入 json
+       # file = codecs.open(self.json_file, 'a', encoding='utf-8')
+       # line = json.dumps(dict(item), ensure_ascii=False) + "\n"
+       # file.write(line)
         # 写入 excel
         has_sheet = self.test.has_sheet(self.excel_file, item['University'])
         if has_sheet is False:
