@@ -22,7 +22,7 @@ class MasterPipeline(object):
         self.csv_file = self.path + self.name + self.date + '.csv'
         self.json_file = self.path + self.name + self.date + '.json'
         self.excel_file = self.path + self.name + self.date + '.xlsx'
-        self.head = ['Link', 'Subject1', 'Subject2', 'Subject3', 'Subject4', 'University', 'ExamType', 'College', 'Major', 'Studytype', 'ResearchInterests', 'Teacher', 'StudentNo', 'Content']
+        self.head = ['Link', 'Subject1', 'Subject2', 'Subject3', 'Subject4', 'University', 'ExamType', 'College', 'Major', 'StudyType', 'ResearchInterests', 'Teacher', 'StudentNo', 'Content']
         self.csv_handler = CsvHandler()
         self.test = ExcelHandler()
         self.excel = self.test.init_excel(self.excel_file, 'sheet1', self.head) 
@@ -52,9 +52,24 @@ class MasterPipeline(object):
 
 class DoctorPipeline(object):
     def __init__(self):
-        self.file = './result/xlsx/doctor_directory.xlsx'
-        self.head = ['Link', 'Subject1', 'Subject2', 'Subject3', 'Subject4', 'University', 'ExamType', 'College', 'Major', 'Studytype', 'ResearchInterests', 'Teacher', 'StudentNo', 'Content']
+        self.file = './result/doctor/'
+        self.name = 'doctor_directory'
+        self.date = '_' + time.strftime("%Y%m%d%H%M")
+        self.excel_file = self.file + self.name + self.date + '.xlsx'
+        self.head = ['Link', 'Subject1', 'Subject2', 'Subject3', 'Subject4', 'University', 'ExamType', 'College', 'Major', 'StudyType', 'ResearchInterests', 'Teacher', 'StudentNo', 'Content']
         self.test = ExcelHandler()
-        self.excel = self.test.init_excel(self.file, 'sheet1', self.head) 
+        self.excel = self.test.init_excel(self.excel_file, 'sheet1', self.head)
+
+    def process_item(self, item, spider):
+        has_sheet = self.test.has_sheet(self.excel_file, item['University'])
+        if has_sheet is False:
+            self.test.add_sheet(self.excel_file, item['University'], self.head)
+            self.test.append_data(self.excel_file, item['University'], item)
+        else:
+            self.test.append_data(self.excel_file, item['University'], item)
+        return item
+
+    def close_spider(self, spider):
+        pass
 
 
