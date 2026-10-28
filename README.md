@@ -346,7 +346,26 @@ Subject4 = (818)经济学原理
 
 ## 输出文件
 
-一次运行生成一组带时间戳的文件（时间戳在第一次写入时生成，三种格式共用）：
+命名规则：`<输出目录>/<master|doctor>/<前缀>_<YYYYMMDDHHMM>.<扩展名>`
+
+| 部分 | 取值 |
+| --- | --- |
+| 输出目录 | `config.yaml` 的 `output.directory`，默认 `./result` |
+| 子目录 | 硕士 `master` / 博士 `doctor` |
+| 前缀 | 硕士 `master_directory` / 博士 `doctor_directory` |
+| 时间戳 | `%Y%m%d%H%M`（年月日时分），**爬取启动时刻** |
+| 扩展名 | `.csv` / `.json` / `.xlsx` |
+
+一次运行的实际产物：
+
+```
+result/master/master_directory_202610281704.csv
+result/master/master_directory_202610281704.json
+result/master/master_directory_202610281704.xlsx
+result/doctor/doctor_directory_202610281704.csv
+result/doctor/doctor_directory_202610281704.json
+result/doctor/doctor_directory_202610281704.xlsx
+```
 
 | spider | 文件 | 说明 |
 | --- | --- | --- |
@@ -359,6 +378,12 @@ Subject4 = (818)经济学原理
 
 几个容易踩的细节：
 
+- **三种格式共用同一个时间戳**：同一次运行生成的文件只差扩展名。
+- **时间戳是爬取启动时刻**，不是第一条数据落盘的时刻 —— pipeline 在 crawler 初始化时就创建好了。
+- **文件是懒创建的**：目录和文件都等到第一条数据写入时才建。所以只跑 `master` 时
+  `result/doctor/` 下不会有文件产生（不是空文件，是根本没有）。
+- **同一分钟内重复跑会追加**：JSON 以追加模式打开，CSV 也一样。正常情况下两次运行撞不到同一分钟；
+  真撞上了，数据会接到同一个文件里而不是覆盖。
 - **三种格式的列顺序一致**，都是：`Link, Subject1~4, University, ExamType, College, Major, StudyType, ResearchInterests, Teacher, StudentNo, Content`。
 - **`.json` 其实是 JSONL**：每行一条独立 JSON 记录，不是标准 JSON 数组。
 - **`.xlsx` 其实是 Excel 97-2003 格式**：文件由 `xlwt` 写出，二进制结构是 `.xls`（BIFF8），只是扩展名写成了 `.xlsx`。用 Excel 打开会提示「文件格式与扩展名不匹配」，用 WPS / LibreOffice / pandas 则可直接读取。
