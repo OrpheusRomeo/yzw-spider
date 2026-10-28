@@ -1,74 +1,89 @@
 import os
 
-import xlrd
 import xlwt
-from xlutils.copy import copy
 
 
 class ExcelHandler(object):
-    """Excel 读写：新建工作簿、加 sheet、追加行"""
+    """Excel 写入：先在内存里攒数据，最后一次性建簿落盘
+
+    原来的写法是每写一行就 xlrd 打开工作簿 + xlutils.copy + save，
+    几百行就明显变慢、几千行基本卡死（整体 O(n²)）。
+    改成攒在内存里、结束时一次性写出，同样的数据量快一个数量级，
+    而且顺带能支持"抓完之后再决定要不要出 Excel"这种需求。
+    """
 
     def __init__(self):
-        self.directory = './result/xlsx/'
+        # filename -> {sheetname: (表头, [行, ...])}
+        self.books = {}
 
     def init_excel(self, filename, sheetname, head):
         """初始化一个 excel：首个 sheet 名为 sheetname，内容为表头"""
-        directory = os.path.dirname(filename)
-        if directory:
-            os.makedirs(directory, exist_ok=True)
+        self.add_sheet(filename, sheetname, head)
 
-        book = xlwt.Workbook()  # 新建工作簿
-        # cell_overwrite_ok=True：同一单元格重复写入不抛 OverwriteException
-        sheet = book.add_sheet(sheetname, cell_overwrite_ok=True)
-        for i, v in enumerate(head):
-            sheet.write(1, i, head[i])  # 表头写在第 2 行，第 1 行留空
-        style = xlwt.XFStyle()  # 新建样式
-        font = xlwt.Font()  # 新建字体
-        font.name = 'Times New Roman'
-        font.bold = True
-        style.font = font  # 将 style 的字体设置为 font
-        book.save(filename_or_stream=filename)  # 一定要保存
+    def add_sheet(self, filename, sheetname, head):
+        """在内存里的工作簿中加一个 sheet"""
+        book = self.books.setdefault(filename, {})
+        if sheetname in book:
+            return
+        book[sheetname] = (list(head or []), [])
 
-    def has_sheet(self, file, sheetname):
+    def has_sheet(self, filename, sheetname):
         """判断工作簿中是否已有某个 sheet"""
-        book = xlrd.open_workbook(file)
-        return sheetname in book.sheet_names()
-
-    def add_sheet(self, file, sheetname, head):
-        """在已存在的 excel 中添加 sheet"""
-        book = xlrd.open_workbook(file)
-        wb = copy(book)
-        sheet = wb.add_sheet(sheetname, cell_overwrite_ok=True)
-        for i, v in enumerate(head):
-            sheet.write(1, i, head[i])  # 填写每行字段名
-        wb.save(file)
+        return sheetname in self.books.get(filename, {})
 
     def append_data(self, filename, sheetname, data_dict, head=None):
-        """往指定 sheet 的末尾追加一行
+        """往指定 sheet 的末尾追加一行数据
 
         head 给出时按表头顺序落列，保证列与表头一一对应；
         不给 head 时退化为按字典键顺序落列。
         """
-        data = xlrd.open_workbook(filename, formatting_info=True)
-        excel = copy(wb=data)  # 完成 xlrd 对象向 xlwt 对象转换
-        table = data.sheet_by_name(sheetname)  # 通过名称来获取指定页
-        excel_table = excel.get_sheet(sheetname)  # 获得要操作的页
-        nrows = table.nrows  # 获得行数
+        book = self.books.setdefault(filename, {})
+        if sheetname not in book:
+            book[sheetname] = (list(head or []), [])
+        sheet_head, rows = book[sheetname]
+        keys = head if head is not None else sheet_head
 
-        if head:
-            keys = head
-        else:
-            keys = list(data_dict.keys())
-
-        for i, key in enumerate(keys):
+        row = []
+        for key in keys:
             value = data_dict.get(key)
             if value is None:
                 value = ''
             elif not isinstance(value, (str, int, float, bool)):
                 value = str(value)
-            excel_table.write(nrows, i, value)  # 每行很多列
+            row.append(value)
+        rows.append(row)
 
-        excel.save(filename)
+    def row_count(self, filename):
+        """工作簿里一共攒了多少行"""
+        return sum(len(rows) for _, rows in self.books.get(filename, {}).values())
+
+    def save(self, filename):
+        """把内存里的数据一次性写成工作簿"""
+        book_data = self.books.get(filename)
+        if not book_data:
+            return False
+
+        directory = os.path.dirname(filename)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+
+        workbook = xlwt.Workbook()
+        style = xlwt.XFStyle()
+        font = xlwt.Font()
+        font.name = 'Times New Roman'
+        font.bold = True
+        style.font = font
+
+        for sheetname, (head, rows) in book_data.items():
+            sheet = workbook.add_sheet(sheetname, cell_overwrite_ok=True)
+            for i, v in enumerate(head):
+                sheet.write(1, i, v, style)   # 表头写在第 2 行，第 1 行留空
+            for r, row in enumerate(rows):
+                for c, value in enumerate(row):
+                    sheet.write(r + 2, c, value)
+
+        workbook.save(filename)
+        return True
 
 
 if __name__ == '__main__':
@@ -79,5 +94,4 @@ if __name__ == '__main__':
     test.has_sheet('Md.xlsx', '919')
     test.append_data('Md.xlsx', '919', {'1': 100, '2': 200, '3': 300, '4': 400})
     test.append_data('Md.xlsx', '818', {'1': 600, '2': 700, '3': 800, '4': 900})
-    test.append_data('Md.xlsx', '818', {'1': 601, '2': 701, '3': 801, '4': 901})
-    test.append_data('Md.xlsx', '818', {'1': 602, '2': 702, '3': 802, '4': 902})
+    test.save('Md.xlsx')

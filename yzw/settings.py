@@ -1,11 +1,8 @@
 # Scrapy settings for yzw project
 #
-# For simplicity, this file contains only settings considered important or
-# commonly used. You can find more settings consulting the documentation:
-#
-#     https://docs.scrapy.org/en/latest/topics/settings.html
-#     https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
-#     https://docs.scrapy.org/en/latest/topics/spider-middleware.html
+# 目标学校 / 目标专业 / 学位层次都放在仓库根目录的 config.yaml 里，
+# 这里只放爬虫本身的开关；限速、并发、cookie 会被 config.yaml 覆盖
+# （见 yzw/spiders/base.py 的 apply_settings）。
 
 BOT_NAME = 'yzw'
 
@@ -13,81 +10,79 @@ SPIDER_MODULES = ['yzw.spiders']
 NEWSPIDER_MODULE = 'yzw.spiders'
 
 
-# Crawl responsibly by identifying yourself (and your website) on the user-agent
-#USER_AGENT = 'yzw (+http://www.yourdomain.com)'
+# ── 配置 ──────────────────────────────────────────
+# 配置文件路径。留空 = 用项目根目录的 config.yaml；
+# 也可以在这里写绝对路径，或用 scrapy crawl master -a config=xxx.yaml 覆盖。
+YZW_CONFIG = None
+
+
+# ── 请求头 ────────────────────────────────────────
+# 研招网对默认的 Scrapy UA 不友好，换成真实浏览器的
+USER_AGENT = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+              '(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36')
+
+DEFAULT_REQUEST_HEADERS = {
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Connection': 'keep-alive',
+}
+
 
 # Obey robots.txt rules
+# 研招网的 /robots.txt 返回 404 页面，等于没有限制，这里保持开启
 ROBOTSTXT_OBEY = True
 
-# Configure maximum concurrent requests performed by Scrapy (default: 16)
-#CONCURRENT_REQUESTS = 32
 
-# Configure a delay for requests for the same website (default: 0)
-# See https://docs.scrapy.org/en/latest/topics/settings.html#download-delay
-# See also autothrottle settings and docs
+# ── 限速 ──────────────────────────────────────────
+# 下面是默认值，实际生效的值来自 config.yaml 的 request 段
 DOWNLOAD_DELAY = 3
-# The download delay setting will honor only one of:
-#CONCURRENT_REQUESTS_PER_DOMAIN = 16
-#CONCURRENT_REQUESTS_PER_IP = 16
+CONCURRENT_REQUESTS_PER_DOMAIN = 1
+CONCURRENT_REQUESTS = 1
 
-# Disable cookies (enabled by default)
-#COOKIES_ENABLED = False
+# Enable and configure the AutoThrottle extension
+# 站点响应慢的时候自动降速，比固定 delay 更稳
+AUTOTHROTTLE_ENABLED = True
+AUTOTHROTTLE_START_DELAY = 1
+AUTOTHROTTLE_MAX_DELAY = 30
+AUTOTHROTTLE_TARGET_CONCURRENCY = 1.0
+AUTOTHROTTLE_DEBUG = False
 
-# Disable Telnet Console (enabled by default)
-#TELNETCONSOLE_ENABLED = False
 
-# Override the default request headers:
-#DEFAULT_REQUEST_HEADERS = {
-#   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-#   'Accept-Language': 'en',
-#}
+# ── 接口限流退避重试 ──────────────────────────────
+# 研招网的接口请求太密时返回 HTTP 200 + {"flag": false, "msg": "访问太频繁"}，
+# Scrapy 自带的重试只看状态码，这种响应不会被重试，会静默丢数据。
+# 下面这个中间件专门认它，退避后重发。
+DOWNLOADER_MIDDLEWARES = {
+    'yzw.middlewares.ThrottleRetryMiddleware': 543,
+}
+THROTTLE_RETRY_TIMES = 3
+THROTTLE_BACKOFF = 10
 
-# Enable or disable spider middlewares
-# See https://docs.scrapy.org/en/latest/topics/spider-middleware.html
-#SPIDER_MIDDLEWARES = {
-#    'yzw.middlewares.YzwSpiderMiddleware': 543,
-#}
 
-# Enable or disable downloader middlewares
-# See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
-#DOWNLOADER_MIDDLEWARES = {
-#    'yzw.middlewares.YzwDownloaderMiddleware': 543,
-#}
-
-# Enable or disable extensions
-# See https://docs.scrapy.org/en/latest/topics/extensions.html
-#EXTENSIONS = {
-#    'scrapy.extensions.telnet.TelnetConsole': None,
-#}
-
-# Configure item pipelines
-# See https://docs.scrapy.org/en/latest/topics/item-pipeline.html
+# ── 输出 ──────────────────────────────────────────
+# 配置对象由 spider 写进来，pipeline 从这里取输出目录 / Excel 策略
 ITEM_PIPELINES = {
-    #'yzw.pipelines.YzwPipeline': 300,
-    #'yzw.pipelines.CsvPipeline': 300,
-    #'yzw.pipelines.JsonPipeline': 300,
-    #'yzw.pipelines.ExcelPipeline': 300,
     'yzw.pipelines.MasterPipeline': 300,
     'yzw.pipelines.DoctorPipeline': 301,
 }
 
-# Enable and configure the AutoThrottle extension (disabled by default)
-# See https://docs.scrapy.org/en/latest/topics/autothrottle.html
-#AUTOTHROTTLE_ENABLED = True
-# The initial download delay
-#AUTOTHROTTLE_START_DELAY = 5
-# The maximum download delay to be set in case of high latencies
-#AUTOTHROTTLE_MAX_DELAY = 60
-# The average number of requests Scrapy should be sending in parallel to
-# each remote server
-#AUTOTHROTTLE_TARGET_CONCURRENCY = 1.0
-# Enable showing throttling stats for every response received:
-#AUTOTHROTTLE_DEBUG = False
 
-# Enable and configure HTTP caching (disabled by default)
-# See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html#httpcache-middleware-settings
+# ── 杂项 ──────────────────────────────────────────
+# 重试：研招网偶尔会抽风
+RETRY_ENABLED = True
+RETRY_TIMES = 3
+RETRY_HTTP_CODES = [500, 502, 503, 504, 522, 524, 408, 429]
+
+# 请求之间的随机抖动交给 AUTOTHROTTLE 处理
+
+# 关闭 telnet 控制台，省得本地开端口
+TELNETCONSOLE_ENABLED = False
+
+# 关闭 cookie 中间件？—— 不关，登录态需要它
+COOKIES_ENABLED = True
+
+# HTTP 缓存（默认关闭，调试接口时打开很有用）
 #HTTPCACHE_ENABLED = True
-#HTTPCACHE_EXPIRATION_SECS = 0
+#HTTPCACHE_EXPIRATION_SECS = 3600
 #HTTPCACHE_DIR = 'httpcache'
-#HTTPCACHE_IGNORE_HTTP_CODES = []
-#HTTPCACHE_STORAGE = 'scrapy.extensions.httpcache.FilesystemCacheStorage'
+#HTTPCACHE_IGNORE_HTTP_CODES = [403, 404, 500]
