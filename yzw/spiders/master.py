@@ -3,10 +3,14 @@
 
 研招网（yz.chsi.com.cn）硕士专业目录查询接口调用流程：
 
-    1. POST /zsml/rs/dws.do      按院校名查询招生单位 -> 拿到院校代码 dwdm
-    2. POST /zsml/rs/dwzys.do    某招生单位的开设专业 -> 拿到专业列表
-    3. POST /zsml/rs/yjfxs.do    某专业的学院/研究方向明细 -> 科目、导师、拟招人数
+    1. 招生单位   schools=all 走院校库逐省枚举；指定院校走 dws.do
+    2. 开设专业   dwzys.do，按门类 -> 一级学科两级收窄
+    3. 学院明细   yjfxs.do，超出 10 条时按 tydxs / xxfs 拆开再取
+
+dwzys.do / yjfxs.do 都是每页硬顶 10 条，而且 start>0 一律返回"请登录"，
+所以枚举专业只能靠收窄条件（门类、一级学科）规避，不能靠翻页。
 """
+import json
 from urllib.parse import urlencode
 
 import scrapy
@@ -18,66 +22,37 @@ from yzw.spiders.base import BaseSpider
 class MasterSpider(BaseSpider):
     name = 'master'
 
-    # 大学列表
-    _universities = [
-        '南京大学', '南开大学',
-    ]
+    # 本 spider 只负责硕士
+    degree_kind = 'master'
 
-    # 学科大类代码
-    _discipline_codes = [
-        {"mc": "经济学", "dm": "02"},
-    ]
+    # 每次请求取回的条数（接口硬顶 10 条，给大也没用）
+    _page_size = 10
 
-    # 每次请求取回的条数
-    _page_size = 20
+    def __init__(self, name=None, **kwargs):
+        super().__init__(name=name, **kwargs)
+        # 明细行去重：(dwdm, zydm, 整行内容)
+        self._seen_details = set()
 
-    def get_universities(self):
-        """获取大学列表"""
-        return self._universities
+    def needs_code_table(self):
+        """硕士侧一定要代码表：全量抓取时按门类收窄，指定专业时按名称解析"""
+        return True
 
-    def get_dm(self):
-        """获取学科大类代码列表"""
-        return [i["dm"] for i in self._discipline_codes]
+    def school_requests(self, unit):
+        """一所学校 -> 按门类 / 一级学科发 dwzys.do"""
+        dwdm = unit.get('dwdm')
+        dwmc = unit.get('dwmc')
 
-    def start_requests(self):
-        """生成初始请求：按院校名查招生单位"""
-        for university in self.get_universities():
+        for ml, yjxk, zy in self.major_groups():
             form = {
-                'dwmc': university, 'dwdm': '', 'ssdm': '', 'xxfs': '',
-                'tydxs': '', 'jsggjh': '', 'jsxbjh': '',
+                'dwdm': dwdm, 'dwmc': dwmc,
+                'zydm': zy, 'zymc': '', 'xwlx': '',
+                'mldm': ml, 'yjxkdm': yjxk,
+                'xxfs': '', 'tydxs': '', 'jsggjh': '', 'jsxbjh': '',
                 'start': 0, 'curPage': 1, 'pageSize': self._page_size,
             }
             yield self.form_request(
-                self.API_DWS, form, self.parse_university,
-                university=university,
-            )
-
-    def parse_university(self, response):
-        """解析招生单位列表，逐个专业代码展开请求"""
-        msg = self.parse_json(response)
-        if not msg:
-            return
-
-        for unit in msg.get('list') or []:
-            dwdm = unit.get('dwdm')
-            dwmc = unit.get('dwmc')
-            if not dwdm:
-                continue
-
-            for dm in self.get_dm():
-                for major_code in self.get_major(dm):
-                    form = {
-                        'dwdm': dwdm, 'dwmc': dwmc,
-                        'zydm': '', 'zymc': '', 'xwlx': '',
-                        'mldm': dm, 'yjxkdm': major_code,
-                        'xxfs': '', 'tydxs': '', 'jsggjh': '', 'jsxbjh': '',
-                        'start': 0, 'curPage': 1, 'pageSize': self._page_size,
-                    }
-                    yield self.form_request(
-                        self.API_DWZYS, form, self.parse_major_list,
-                        dwdm=dwdm, dwmc=dwmc, start=0, cur_page=1,
-                        mldm=dm, yjxkdm=major_code,
-                    )
+                self.API_DWZYS, form, self.parse_major_list,
+                dwdm=dwdm, dwmc=dwmc, ml=ml, yjxkdm=yjxk, zydm=zy, form=form)
 
     def parse_major_list(self, response):
         """解析专业列表，对每个专业请求学院/研究方向明细"""
@@ -87,43 +62,61 @@ class MasterSpider(BaseSpider):
 
         dwdm = response.meta['dwdm']
         dwmc = response.meta['dwmc']
-        cur_page = response.meta['cur_page']
+        ml = response.meta['ml']
+        yjxkdm = response.meta['yjxkdm']
+        zydm_filter = response.meta['zydm']
 
-        for major in msg.get('list') or []:
+        majors = msg.get('list') or []
+        total = msg.get('totalCount') or 0
+
+        if total > len(majors):
+            if yjxkdm or zydm_filter:
+                # 已经收窄到一级学科 / 专业了还是超 10 条，
+                # 只剩"配了登录态直接翻页"这一条路
+                yield from self.paged_requests(
+                    self.API_DWZYS, response.meta['form'],
+                    self.parse_major_list, response.meta, total)
+            else:
+                # 门类这一档超过 10 条 —— 再用一级学科收窄一次
+                children = self.codes.yjxk_codes(ml)
+                if children:
+                    for child in children:
+                        form = {
+                            'dwdm': dwdm, 'dwmc': dwmc,
+                            'zydm': '', 'zymc': '', 'xwlx': '',
+                            'mldm': ml, 'yjxkdm': child,
+                            'xxfs': '', 'tydxs': '', 'jsggjh': '', 'jsxbjh': '',
+                            'start': 0, 'curPage': 1, 'pageSize': self._page_size,
+                        }
+                        yield self.form_request(
+                            self.API_DWZYS, form, self.parse_major_list,
+                            dwdm=dwdm, dwmc=dwmc, ml=ml, yjxkdm=child, zydm='',
+                            form=form)
+                else:
+                    self.logger.warning('%s 的 %s 门类有 %d 个专业，超过 10 条且没有一级学科可拆',
+                                        dwmc, ml, total)
+
+        for major in majors:
             zydm = major.get('zydm')
-            zymc = major.get('zymc')
             if not zydm:
                 continue
+            if not self.match_major(zydm):
+                continue
+            if not self.mark_major_seen(dwdm, zydm):
+                continue
+            yield from self.detail_requests(dwdm, dwmc, major)
 
-            form = {
-                'zydm': zydm, 'zymc': zymc, 'dwdm': dwdm,
-                'xxfs': '', 'tydxs': '', 'jsggjh': '', 'jsxbjh': '',
-                'start': 0, 'pageSize': self._page_size, 'totalCount': 0,
-            }
-            yield self.form_request(
-                self.API_YJFXS, form, self.parse_detail,
-                dwdm=dwdm, dwmc=dwmc, major=major,
-            )
-
-        # 专业列表翻页
-        total_page = msg.get('totalPage') or 1
-        if cur_page < total_page:
-            next_page = cur_page + 1
-            form = {
-                'dwdm': dwdm, 'dwmc': dwmc,
-                'zydm': '', 'zymc': '', 'xwlx': '',
-                'mldm': response.meta.get('mldm', ''),
-                'yjxkdm': response.meta.get('yjxkdm', ''),
-                'xxfs': '', 'tydxs': '', 'jsggjh': '', 'jsxbjh': '',
-                'start': (next_page - 1) * self._page_size,
-                'curPage': next_page, 'pageSize': self._page_size,
-            }
-            yield self.form_request(
-                self.API_DWZYS, form, self.parse_major_list,
-                dwdm=dwdm, dwmc=dwmc, start=form['start'], cur_page=next_page,
-                mldm=response.meta.get('mldm', ''),
-                yjxkdm=response.meta.get('yjxkdm', ''),
-            )
+    def detail_requests(self, dwdm, dwmc, major):
+        """某个专业 -> 学院 / 研究方向明细"""
+        form = {
+            'zydm': major.get('zydm') or '', 'zymc': major.get('zymc') or '',
+            'dwdm': dwdm,
+            'xxfs': '', 'tydxs': '', 'jsggjh': '', 'jsxbjh': '',
+            'start': 0, 'pageSize': self._page_size, 'totalCount': 0,
+        }
+        yield self.form_request(
+            self.API_YJFXS, form, self.parse_detail,
+            dwdm=dwdm, dwmc=dwmc, major=major, form=form, split='')
 
     def parse_detail(self, response):
         """解析学院/研究方向明细，产出 MasterItem"""
@@ -131,10 +124,42 @@ class MasterSpider(BaseSpider):
         if not msg:
             return
 
+        rows = msg.get('list') or []
+        total = msg.get('totalCount') or 0
+
+        if total > len(rows):
+            # 明细被截断到 10 条，先试试带登录态能不能直接翻页
+            yield from self.paged_requests(
+                self.API_YJFXS, response.meta['form'],
+                self.parse_detail, response.meta, total)
+
+            # 再用收窄条件拆开重取
+            splits = self.detail_splits(response.meta)
+            if splits:
+                for form, split in splits:
+                    yield self.form_request(
+                        self.API_YJFXS, form, self.parse_detail,
+                        dwdm=response.meta['dwdm'], dwmc=response.meta['dwmc'],
+                        major=response.meta['major'], form=form, split=split)
+            elif response.meta.get('split') != 'paged':
+                # 拆到底了还是超 10 条：研招网匿名接口本身也只给 10 条，
+                # 这部分数据拿不到，明确记下来，不静默丢
+                self.logger.warning(
+                    '专业 %s(%s) 的明细有 %d 条，接口只返回 %d 条，'
+                    '拆到 %s 之后仍超 10 条，剩余数据拿不到',
+                    response.meta['major'].get('zymc'),
+                    response.meta['major'].get('zydm'),
+                    total, len(rows), response.meta.get('split') or '无')
+
         major = response.meta['major']
         dwmc = response.meta['dwmc']
+        dwdm = response.meta['dwdm']
 
-        for row in msg.get('list') or []:
+        for row in rows:
+            # 多个维度拆出来的结果可能有重叠，按整行内容去重
+            if not self.mark_detail_seen(dwdm, major.get('zydm'), row):
+                continue
+
             item = MasterItem()
 
             item['University'] = dwmc
@@ -152,6 +177,43 @@ class MasterSpider(BaseSpider):
 
             item['Link'] = self.build_detail_url(major, row)
             yield item
+
+    def detail_splits(self, meta):
+        """明细超过 10 条时的拆分方案
+
+        yjfxs.do 每页硬顶 10 条、start>0 一律"请登录"，
+        所以只能靠收窄条件把结果拆开重取。
+        实测这个接口 **只认 tydxs（统招 / 非统招）** 一个筛选条件：
+        xxfs / jsggjh / jsxbjh 传进去直接报"参数错误"。
+
+        多数专业 tydxs 一步就能拆全（7 + 5 = 12 = totalCount）；
+        如果一个专业的研究方向 tydxs 全都一样，那就真的拿不全了
+        （研招网匿名状态下自己也只能看到 10 条），只能记警告。
+        """
+        form = meta.get('form') or {}
+        split = meta.get('split') or ''
+
+        if split == '':
+            return [(dict(form, tydxs='0'), 'tydxs'),
+                    (dict(form, tydxs='1'), 'tydxs')]
+        return []
+
+    def mark_major_seen(self, dwdm, zydm):
+        """同一个专业的明细只抓一遍（门类查询和一级学科查询会重复命中）"""
+        key = (str(dwdm), str(zydm))
+        if key in self._seen_majors:
+            return False
+        self._seen_majors.add(key)
+        return True
+
+    def mark_detail_seen(self, dwdm, zydm, row):
+        """明细行去重：多维度拆分出来的结果可能有重叠"""
+        key = (str(dwdm), str(zydm),
+               json.dumps(row, sort_keys=True, ensure_ascii=False))
+        if key in self._seen_details:
+            return False
+        self._seen_details.add(key)
+        return True
 
     def extract_subjects(self, kskmz):
         """从考试科目中提取 Subject1~Subject4。
