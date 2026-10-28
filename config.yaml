@@ -1,0 +1,51 @@
+# 研招网爬虫配置 —— 目标学校 / 目标专业 / 学位层次都在这里改
+#
+#   scrapy crawl master   # 只抓硕士
+#   scrapy crawl doctor   # 只抓博士
+#   scrapy crawl all      # 硕士 + 博士都抓
+#
+# 命令行临时覆盖：
+#   scrapy crawl all -a config=other.yaml -a degree=doctor -a schools=all
+
+# ── 1. 学位层次 ──────────────────────────────────────────
+#   master = 只抓硕士
+#   doctor = 只抓博士
+#   both   = 硕士 + 博士都抓
+degree: master
+
+# ── 2. 目标学校 ──────────────────────────────────────────
+#   all    = 全国全部招生单位（按省份逐省枚举，结果缓存在 data/schools.json）
+#   否则填院校名称（"南京大学"）或院校代码（"10284"）
+schools:
+  - 南京大学
+  - 南开大学
+
+# 自动枚举漏掉的院校，手工补在这里；schools=all 时也有意义
+extra_schools: []
+
+# ── 3. 目标专业 ──────────────────────────────────────────
+#   all    = 所选学校的全部专业
+#   否则按名称或代码填写，粒度自动往下钻：
+#     经济学      -> 门类 02
+#     应用经济学  -> 一级学科 0202
+#     西方经济学  -> 专业 020104
+#   同名的会一并抓（"临床医学"既有学术学位 1002，也有专业学位 105100）
+majors: all
+
+# ── 4. 输出 ──────────────────────────────────────────────
+output:
+  directory: ./result          # 输出根目录，下面分 master/ 和 doctor/
+  excel: auto                  # auto = 学校数不超阈值才出 Excel；always = 一定出；never = 不出
+  excel_max_schools: 100       # auto 模式下的阈值（超过就只出 CSV / JSON）
+
+# ── 5. 抓取行为 ──────────────────────────────────────────
+request:
+  delay: 3                     # 同一站点两次请求的间隔（秒）
+  concurrency: 1               # 并发数
+  max_schools: 0               # >0 只抓前 N 所学校（试跑用），0 = 不限
+
+# ── 6. 登录态（可选）────────────────────────────────────
+# 填上研招网的 cookie 之后，接口的 start 翻页就能用，
+# "每个专业只能拿到 10 条明细"的限制会消失。
+# 例：JSESSIONID=xxx; CHSICC_CLIENTFLAGZSML=xxx
+cookie: ""
