@@ -1,0 +1,20 @@
+# 运行环境：Python 3.12（实测 3.12.13）
+#
+# Scrapy 版本说明：
+#   本项目的 spider 用 start_requests() 生成初始请求，并在基类里显式提供了
+#   async def start() 转发，因此 2.13 ~ 2.17 都能正常启动。
+#   （Scrapy 2.16 起不再自动调度 start_requests()，只靠它会在启动时报
+#    ValueError: Missing scheme in request url: h）
+Scrapy>=2.13,<3
+
+# Excel 读写（yzw/pipelines.py -> yzw/utils/excel_handler.py）
+# 读取用 xlrd + xlutils.copy 追加写入用 xlwt
+xlwt>=1.3.0,<2
+xlrd>=2.0.1,<3
+xlutils>=2.0.0,<3
+
+# yzw/middlewares.py 中直接引用
+itemadapter>=0.8
+
+# 以下为 Scrapy 的传递依赖，会自动安装，此处不重复列出：
+#   lxml / parsel（HTML 解析）、Twisted（异步框架）、pyOpenSSL、cssselect、w3lib

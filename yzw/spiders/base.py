@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """爬虫基类 - 抽取 MasterSpider 和 DoctorSpider 的公共逻辑"""
-import scrapy
+import json
 import logging
+from urllib.parse import urlencode
+
+import scrapy
 
 logger = logging.getLogger(__name__)
 
@@ -18,19 +21,20 @@ class BaseSpider(scrapy.Spider):
         'Subject1', 'Subject2', 'Subject3', 'Subject4', 'Link'
     ]
 
-    # XPath 选择器常量
-    XPATH_SUBJECT = "//div[@class='zsml-result']/table/tbody/tr[1]/td[{col}]/text()"
-    XPATH_CONDITION_ROWS = [
-        ("University", "//table[@class='zsml-condition']/tbody/tr[1]/td[2]/text()"),
-        ("ExamType", "//table[@class='zsml-condition']//tbody/tr[1]/td[4]/text()"),
-        ("College", "//table[@class='zsml-condition']//tbody/tr[2]/td[2]/text()"),
-        ("Major", "//table[@class='zsml-condition']//tbody/tr[2]/td[4]/text()"),
-        ("StudyType", "//table[@class='zsml-condition']//tbody/tr[3]/td[2]/text()"),
-        ("ResearchInterests", "//table[@class='zsml-condition']//tbody/tr[3]/td[4]/text()"),
-        ("Teacher", "//table[@class='zsml-condition']//tbody/tr[4]/td[2]/text()"),
-        ("StudentNo", "//table[@class='zsml-condition']//tbody/tr[4]/td[4]/text()"),
-        ("Content", "//table[@class='zsml-condition']//tbody/tr[5]/td[1]/text()"),
-    ]
+    # 研招网接口地址（2025-09 改版后的新接口）
+    API_DWS = 'https://yz.chsi.com.cn/zsml/rs/dws.do'          # 按招生单位查询
+    API_DWZYS = 'https://yz.chsi.com.cn/zsml/rs/dwzys.do'      # 某招生单位的开设专业
+    API_YJFXS = 'https://yz.chsi.com.cn/zsml/rs/yjfxs.do'      # 某专业的学院/研究方向明细
+    API_ZYDETAIL = 'https://yz.chsi.com.cn/zsml/zydetail.do'  # 专业详情页
+
+    # 浏览器发往研招网的表单请求头
+    AJAX_HEADERS = {
+        'X-Requested-With': 'XMLHttpRequest',
+        'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
+    }
+
+    # 学习方式代码 -> 名称
+    STUDY_TYPES = {'1': '全日制', '2': '非全日制'}
 
     # 专业代码映射（博士和硕士共用）
     major_dict_list = [
@@ -156,22 +160,54 @@ class BaseSpider(scrapy.Spider):
             result = ""
         return result
 
-    def parse_detail_common(self, response, item):
-        """解析详情页的公共逻辑（博士和硕士共用）"""
+    # ------------------------------------------------------------------
+    # 通用请求/解析工具
+    # ------------------------------------------------------------------
+    async def start(self):
+        """Scrapy 2.13+ 的初始请求入口。
+
+        Scrapy 2.16 起不再调度 start_requests()，2.13~2.15 则通过它调度，
+        这里显式转发一次，兼顾新旧版本。
+        """
+        for request in self.start_requests():
+            yield request
+
+    def form_request(self, url, formdata, callback, **meta):
+        """构造研招网的表单 POST 请求"""
+        return scrapy.Request(
+            url=url,
+            method='POST',
+            body=urlencode(formdata).encode('utf-8'),
+            headers=self.AJAX_HEADERS,
+            callback=callback,
+            meta=meta,
+        )
+
+    def parse_json(self, response):
+        """解析研招网的 JSON 响应，失败返回空字典"""
         try:
-            for col in range(1, 5):
-                xpath = self.XPATH_SUBJECT.format(col=col)
-                subject_data = response.xpath(xpath).extract()
-                item[f'Subject{col}'] = self.trans_data(subject_data).strip()
-        except Exception as e:
-            logger.warning(f"解析科目失败: {e}")
+            data = json.loads(response.text)
+        except (json.JSONDecodeError, ValueError) as e:
+            self.logger.error(f"JSON 解析失败: {e} (url={response.url})")
+            return {}
 
-        for field, xpath in self.XPATH_CONDITION_ROWS:
-            try:
-                value = response.xpath(xpath).extract_first()
-                item[field] = value.strip() if value else ''
-            except Exception as e:
-                logger.warning(f"解析字段 {field} 失败: {e}")
-                item[field] = ''
+        if not data.get('flag'):
+            self.logger.warning(f"接口返回失败: {data.get('msg')} (url={response.url})")
+            return {}
 
-        return item
+        return data.get('msg') or {}
+
+    def study_type(self, code):
+        """学习方式代码转名称"""
+        return self.STUDY_TYPES.get(str(code), '')
+
+    @staticmethod
+    def merge_subject(current, text):
+        """向单个科目槽位追加一个取值（去重后用 ' or ' 连接）"""
+        if not text:
+            return current
+        if not current:
+            return text
+        if text in current:
+            return current
+        return f"{current} or {text}"

@@ -6,4 +6,6 @@
 *.swn
 *.swo
 /yzw/result/master_bak/
-/yzw/result/master/
+
+# 爬取结果输出目录
+/result/
