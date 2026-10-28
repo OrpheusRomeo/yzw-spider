@@ -9,3 +9,5 @@
 
 # 爬取结果输出目录
 /result/
+/result_test*/
+/result*/
