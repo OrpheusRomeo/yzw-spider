@@ -48,6 +48,45 @@ def test_schools_all_string():
     assert config.school_names() == []
 
 
+def test_schools_all_in_list():
+    """列表里写 - all 也算全量"""
+    config = build_config({'schools': ['all']})
+    assert config.all_schools() is True
+
+
+def test_schools_comma_separated_string():
+    """命令行覆盖只能传字符串，用逗号分隔"""
+    config = build_config({'schools': '南京大学,南开大学'})
+    assert config.all_schools() is False
+    assert config.school_names() == ['南京大学', '南开大学']
+
+
+def test_schools_chinese_comma_separated():
+    config = build_config({'schools': '南京大学，南开大学'})
+    assert config.school_names() == ['南京大学', '南开大学']
+
+
+def test_schools_string_with_all_becomes_all():
+    config = build_config({'schools': '南京大学, all'})
+    assert config.all_schools() is True
+
+
+def test_majors_comma_separated_string():
+    config = build_config({'majors': '经济学,应用经济学'})
+    assert config.all_majors() is False
+    assert config.major_names() == ['经济学', '应用经济学']
+
+
+def test_majors_all_in_list():
+    config = build_config({'majors': ['all']})
+    assert config.all_majors() is True
+
+
+def test_extra_schools_comma_separated_string():
+    config = build_config({'schools': ['南京大学'], 'extra_schools': '某某大学,某某理工'})
+    assert config.school_names() == ['南京大学', '某某大学', '某某理工']
+
+
 def test_schools_list_normalised():
     config = build_config({'schools': ['南京大学', '  ', '10284']})
     assert config.all_schools() is False

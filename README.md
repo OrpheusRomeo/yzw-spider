@@ -36,7 +36,7 @@
 - **配置驱动**：学位层次（硕士 / 博士 / 两者）、目标学校、目标专业、输出目录、限速全部由 `config.yaml` 决定。
 - **三种入口**：`master`（硕士）、`doctor`（博士）、`all`（两者一起抓），共用同一份配置。
 - **粒度自动下钻**：专业写名字就行 —— `经济学` → 门类 `02`，`应用经济学` → 一级学科 `0202`，`西方经济学` → 专业 `020104`。
-- **全国枚举**：按省份逐省翻研招网院校库，能拿到全部 936 所招生单位及其代码（`schools: all`）。
+- **全国枚举**：按省份逐省翻研招网院校库，能拿到全部 936 所招生单位及其代码（`schools: [- all]`）。
 - **走 JSON 接口**：直接调用研招网的目录查询接口，不解析 HTML 列表页，页面改版时受影响更小。
 - **字段完整**：院校、学院、专业、研究方向、指导教师、拟招人数、学习方式、考试方式、备注，以及初试科目 1–4。
 - **多格式导出**：同一份数据同时写出 CSV、JSON、Excel 三种格式，文件名带运行时间戳。
@@ -109,6 +109,7 @@ scrapy crawl all
 scrapy crawl master -a config=other.yaml     # 用另一份配置文件
 scrapy crawl all    -a degree=both           # 命令行临时改学位层次
 scrapy crawl master -a schools=all           # 命令行临时抓全国
+scrapy crawl master -a schools=南京大学,南开大学  # 逗号分隔
 scrapy crawl master -s LOG_LEVEL=INFO        # 调整日志级别
 ```
 
@@ -134,9 +135,9 @@ scrapy crawl master -s LOG_LEVEL=INFO        # 调整日志级别
 | 配置项 | 取值 | 说明 |
 | --- | --- | --- |
 | `degree` | `master` / `doctor` / `both` | 学位层次。`both` 等价于硕士 + 博士 |
-| `schools` | `all` / 字符串 / 列表 | 目标学校。`all` = 全国全部；否则填校名（`南京大学`）或招生单位代码（`10284`） |
-| `extra_schools` | 列表 | 手工补漏的院校。指定模式下追加在 `schools` 后面；`schools: all` 时在省份枚举跑完后补上 |
-| `majors` | `all` / 字符串 / 列表 | 目标专业。`all` = 所选学校的全部专业；否则填专业名或专业代码 |
+| `schools` | 列表 | 目标学校，**一律用列表写**。`- all` = 全国全部；否则填校名（`南京大学`）或招生单位代码（`10284`） |
+| `extra_schools` | 列表 | 手工补漏的院校。指定模式下追加在 `schools` 后面；`schools: [- all]` 时在省份枚举跑完后补上 |
+| `majors` | 列表 | 目标专业，**一律用列表写**。`- all` = 所选学校的全部专业；否则填专业名或专业代码 |
 | `output.directory` | 路径 | 输出根目录，默认 `./result`，下面分 `master/` 和 `doctor/` |
 | `output.excel` | `auto` / `always` / `never` | Excel 输出策略，默认 `auto` |
 | `output.excel_max_schools` | 整数 | `auto` 模式下的学校数阈值，默认 100 |
@@ -147,26 +148,36 @@ scrapy crawl master -s LOG_LEVEL=INFO        # 调整日志级别
 
 ### 目标学校怎么写
 
-`schools` 有三种写法，程序会自动归一化，不用纠结格式：
+`schools` 一律用**列表**写，只有一项也是列表：
 
 ```yaml
-schools: all                      # ① 全部学校（按省份逐省枚举）
-schools: 南京大学                  # ② 单个学校 —— 裸字符串就行
-schools: [南京大学, 南开大学]        # ③ 几个学校 —— 列表
+schools:                        # ① 全部学校（按省份逐省枚举）
+  - all
+
+schools:                        # ② 单个学校 —— 也是列表
+  - 南京大学
+
+schools:                        # ③ 几个学校
+  - 南京大学
+  - 南开大学
 ```
 
 几个细节：
 
 - 校名和招生单位代码可以混用：`schools: [南京大学, 10284]`。
   代码就是研招网的招生单位代码（`10284` = 南京大学），院校库枚举出来的也是它。
-- 列表里混进 `all` 也算全量：`schools: [南京大学, all]`。
+- **命令行覆盖只能传字符串**，这时用逗号分隔（`schools` / `majors` / `extra_schools` 都一样）：
+  ```bash
+  scrapy crawl master -a schools=南京大学,南开大学
+  ```
+  中英文逗号都认。
 - **`schools` 写空或漏写会直接报错退出**，不会悄悄空跑一圈：
   ```
-  ERROR: 配置里没有指定任何院校，没有可抓的目标；要抓全国请写 schools: all，要抓指定院校请写 schools: [校名]
+  ERROR: 配置里没有指定任何院校，没有可抓的目标；要抓全国请写 schools: [- all]，要抓指定院校请写 schools: [校名]
   ```
 - `extra_schools` 是给"院校库里没收录、枚举漏掉"的院校兜底的。
   它在两种模式下都生效：指定模式下追加在 `schools` 后面；
-  `schools: all` 时在 31 个省枚举跑完后单独补一次，已经被枚举抓到过的院校不会重复抓。
+  `schools: [- all]` 时在 31 个省枚举跑完后单独补一次，已经被枚举抓到过的院校不会重复抓。
 
 ### 三个例子
 
@@ -190,15 +201,18 @@ degree: doctor
 schools:
   - 南京大学
   - 10284          # 代码和校名可以混用
-majors: all
+majors:
+  - all
 ```
 
 **③ 全量：全国所有学校 × 所有专业**
 
 ```yaml
 degree: master
-schools: all
-majors: all
+schools:
+  - all
+majors:
+  - all
 output:
   directory: ./result
   excel: never          # 全量数据量太大，明确关掉 Excel
@@ -241,7 +255,7 @@ request:
 
 ## 全量抓取
 
-`schools: all` 时，爬虫按**省份**逐个翻研招网院校库：
+`schools: [- all]` 时，爬虫按**省份**逐个翻研招网院校库：
 
 ```
 https://yz.chsi.com.cn/sch/search.do?ssdm=32&start=20

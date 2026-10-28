@@ -4,8 +4,8 @@
 整个爬取分成四个阶段，靠 Scrapy 的回调链串起来：
 
     1. 学科代码表   ml.json -> yjxk/{门类}.json -> autozy.do（按需）
-    2. 招生单位枚举 schools=all  走院校库，逐省翻页
-                     schools=[..] 走 dws.do，按名称/代码精确查
+    2. 招生单位枚举 schools=[- all] 走院校库，逐省翻页
+                     schools=[..]     走 dws.do，按名称/代码精确查
     3. 专业枚举     dwzys.do，按门类 / 一级学科收窄
     4. 明细         yjfxs.do，超出 10 条时按 tydxs / xxfs 拆开再取
 """
@@ -174,7 +174,7 @@ class BaseSpider(scrapy.Spider):
             return False
         self.logger.error(
             '配置里没有指定任何院校，没有可抓的目标；'
-            '要抓全国请写 schools: all，要抓指定院校请写 schools: [校名]')
+            '要抓全国请写 schools: [- all]，要抓指定院校请写 schools: [校名]')
         return True
 
     def needs_code_table(self):

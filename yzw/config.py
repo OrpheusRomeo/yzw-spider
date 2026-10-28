@@ -10,6 +10,7 @@
 配置项说明见仓库根目录的 config.yaml。
 """
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
@@ -146,6 +147,16 @@ class Config:
 # ----------------------------------------------------------------------
 # 归一化
 # ----------------------------------------------------------------------
+def _split_names(text: str) -> List[str]:
+    """按逗号切分（支持中英文逗号），去掉空白项
+
+    配置文件里用列表写就行，但命令行覆盖只能传字符串：
+        scrapy crawl master -a schools=南京大学,南开大学
+    """
+    parts = re.split(r'[,，]', text)
+    return [part.strip() for part in parts if part.strip()]
+
+
 def _as_name_list(value: Any, field_name: str,
                   default: Union[str, List[str]] = None) -> Union[str, List[str]]:
     """把 'all' / 字符串 / 列表统一成 'all' 或字符串列表"""
@@ -155,11 +166,14 @@ def _as_name_list(value: Any, field_name: str,
         value = value.strip()
         if not value:
             return [] if default is None else default
-        if value == ALL:
+        names = _split_names(value)
+        if ALL in names:
             return ALL
-        return [value]
+        return names
     if isinstance(value, (list, tuple, set)):
-        names = [str(item).strip() for item in value if str(item).strip()]
+        names = []
+        for item in value:
+            names.extend(_split_names(str(item).strip()))
         if any(name == ALL for name in names):
             return ALL
         return names
@@ -170,9 +184,12 @@ def _as_str_list(value: Any, field_name: str) -> List[str]:
     if value is None:
         return []
     if isinstance(value, str):
-        return [value.strip()] if value.strip() else []
+        return _split_names(value.strip())
     if isinstance(value, (list, tuple, set)):
-        return [str(item).strip() for item in value if str(item).strip()]
+        names = []
+        for item in value:
+            names.extend(_split_names(str(item).strip()))
+        return names
     raise ConfigError(f'配置项 {field_name} 类型不对，应为字符串或列表，实际是 {type(value).__name__}')
 
 
