@@ -109,7 +109,9 @@ class BaseSpider(scrapy.Spider):
         self._pending_autozy = []
         self._seen_majors = set()         # (dwdm, zydm)，避免同一个专业抓两遍
         self._crawled_schools = 0
+        self._crawled_codes = set()       # 已经抓过的招生单位代码
         self._pending_provinces = []      # 还没枚举的省份（逐省推进，用完即弃）
+        self._extras_done = False         # extra_schools 是否已经补过
 
     @classmethod
     def from_crawler(cls, crawler, *args, **kwargs):
@@ -157,10 +159,23 @@ class BaseSpider(scrapy.Spider):
                 '/'.join(self.config.degrees), self.degree_kind, self.degree_kind)
             return
 
+        # 目标为空就别白跑一遍代码表了
+        if self.no_targets():
+            return
+
         if self.needs_code_table():
             yield self.get_request(self.API_CODE_ML, self.parse_code_ml)
         else:
             yield from self.resolve_majors()
+
+    def no_targets(self):
+        """一个院校都没指定时报错，返回 True 表示不用继续了"""
+        if self.config.all_schools() or self.config.school_names():
+            return False
+        self.logger.error(
+            '配置里没有指定任何院校，没有可抓的目标；'
+            '要抓全国请写 schools: all，要抓指定院校请写 schools: [校名]')
+        return True
 
     def needs_code_table(self):
         """是否需要装载学科代码表（子类可覆盖）"""
@@ -287,7 +302,10 @@ class BaseSpider(scrapy.Spider):
             ssdm = self._pending_provinces.pop(0)[0]
             yield self.school_page_request(ssdm, 0)
         else:
-            for name in self.config.school_names():
+            names = self.config.school_names()
+            if self.no_targets():
+                return
+            for name in names:
                 yield self.resolve_school_request(name)
 
     def school_page_request(self, ssdm, start):
@@ -317,6 +335,9 @@ class BaseSpider(scrapy.Spider):
         for unit in self.catalog.schools_of(ssdm):
             if self.school_limit_reached():
                 break
+            if unit.get('dwdm') in self._crawled_codes:
+                continue
+            self._crawled_codes.add(unit.get('dwdm'))
             self._crawled_schools += 1
             yield from self.school_requests(unit)
 
@@ -324,6 +345,14 @@ class BaseSpider(scrapy.Spider):
         if self._pending_provinces and not self.school_limit_reached():
             next_ssdm = self._pending_provinces.pop(0)[0]
             yield self.school_page_request(next_ssdm, 0)
+        elif not self._extras_done and not self.school_limit_reached():
+            # 省份枚举跑完了，把 extra_schools 补上 ——
+            # 它们是给"院校库里没收录、枚举漏掉"的院校兜底的
+            self._extras_done = True
+            for name in self.config.extra_schools:
+                if self.school_limit_reached():
+                    break
+                yield self.resolve_school_request(name)
 
     def resolve_school_request(self, name):
         """按院校名称或院校代码精确查招生单位"""
@@ -363,6 +392,12 @@ class BaseSpider(scrapy.Spider):
             return
 
         self.catalog.add(unit)
+        dwdm = unit.get('dwdm')
+        if dwdm in self._crawled_codes:
+            # 全量模式下 extra_schools 可能已经被省份枚举抓到过了
+            self.logger.info('院校 %s 已经抓过，跳过', unit.get('dwmc'))
+            return
+        self._crawled_codes.add(dwdm)
         self._crawled_schools += 1
         yield from self.school_requests(unit)
 

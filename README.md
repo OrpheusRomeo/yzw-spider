@@ -134,9 +134,9 @@ scrapy crawl master -s LOG_LEVEL=INFO        # 调整日志级别
 | 配置项 | 取值 | 说明 |
 | --- | --- | --- |
 | `degree` | `master` / `doctor` / `both` | 学位层次。`both` 等价于硕士 + 博士 |
-| `schools` | `all` 或列表 | 目标学校。`all` = 全国全部；否则填校名（`南京大学`）或招生单位代码（`10284`） |
-| `extra_schools` | 列表 | 手工补漏的院校，追加在 `schools` 后面 |
-| `majors` | `all` 或列表 | 目标专业。`all` = 所选学校的全部专业；否则填专业名或专业代码 |
+| `schools` | `all` / 字符串 / 列表 | 目标学校。`all` = 全国全部；否则填校名（`南京大学`）或招生单位代码（`10284`） |
+| `extra_schools` | 列表 | 手工补漏的院校。指定模式下追加在 `schools` 后面；`schools: all` 时在省份枚举跑完后补上 |
+| `majors` | `all` / 字符串 / 列表 | 目标专业。`all` = 所选学校的全部专业；否则填专业名或专业代码 |
 | `output.directory` | 路径 | 输出根目录，默认 `./result`，下面分 `master/` 和 `doctor/` |
 | `output.excel` | `auto` / `always` / `never` | Excel 输出策略，默认 `auto` |
 | `output.excel_max_schools` | 整数 | `auto` 模式下的学校数阈值，默认 100 |
@@ -144,6 +144,29 @@ scrapy crawl master -s LOG_LEVEL=INFO        # 调整日志级别
 | `request.concurrency` | 整数 | 并发数，默认 1 |
 | `request.max_schools` | 整数 | `>0` 只抓前 N 所学校（试跑用），`0` = 不限，默认 0 |
 | `cookie` | 字符串 | 研招网登录态 cookie，可选 |
+
+### 目标学校怎么写
+
+`schools` 有三种写法，程序会自动归一化，不用纠结格式：
+
+```yaml
+schools: all                      # ① 全部学校（按省份逐省枚举）
+schools: 南京大学                  # ② 单个学校 —— 裸字符串就行
+schools: [南京大学, 南开大学]        # ③ 几个学校 —— 列表
+```
+
+几个细节：
+
+- 校名和招生单位代码可以混用：`schools: [南京大学, 10284]`。
+  代码就是研招网的招生单位代码（`10284` = 南京大学），院校库枚举出来的也是它。
+- 列表里混进 `all` 也算全量：`schools: [南京大学, all]`。
+- **`schools` 写空或漏写会直接报错退出**，不会悄悄空跑一圈：
+  ```
+  ERROR: 配置里没有指定任何院校，没有可抓的目标；要抓全国请写 schools: all，要抓指定院校请写 schools: [校名]
+  ```
+- `extra_schools` 是给"院校库里没收录、枚举漏掉"的院校兜底的。
+  它在两种模式下都生效：指定模式下追加在 `schools` 后面；
+  `schools: all` 时在 31 个省枚举跑完后单独补一次，已经被枚举抓到过的院校不会重复抓。
 
 ### 三个例子
 
