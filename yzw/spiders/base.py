@@ -23,6 +23,7 @@ from yzw.config import (OVERRIDE_KEYS, OVERRIDE_PATHS, PROJECT_ROOT,
                          load_config)
 from yzw.discovery import (PAGE_SIZE, PROVINCE_NAMES, PROVINCES, SchoolCatalog,
                            base_name, merge_catalog, parse_school_list)
+from yzw.progress import emit_progress
 
 logger = logging.getLogger(__name__)
 
@@ -295,7 +296,10 @@ class BaseSpider(scrapy.Spider):
             # 逐省推进：一个省翻完再排下一个省。
             # 这样 request.max_schools 到量就能直接停下来，
             # 不会把 31 个省的白名单全跑一遍。
-            self._pending_provinces = list(PROVINCES)
+            self._pending_provinces = self.pending_provinces()
+            if not self._pending_provinces:
+                self.logger.error('配置的省份里没有可枚举的省份，没有可抓的目标')
+                return
             ssdm = self._pending_provinces.pop(0)[0]
             yield self.school_page_request(ssdm, 0)
         else:
@@ -304,6 +308,18 @@ class BaseSpider(scrapy.Spider):
                 return
             for name in names:
                 yield from self.resolve_school_requests(name)
+
+    def pending_provinces(self):
+        """这次要枚举哪些省，按省份表里的顺序排
+
+        配置里限定了省份就只排那几个 —— 走院校库 sch/search.do?ssdm=xx，
+        三个请求就能拿到全省的院校，不用把每所院校展开成一次 dws.do 请求
+        （dws.do 匿名状态下每页硬顶 10 条，start>0 一律请登录）。
+        """
+        wanted = set(self.config.provinces())
+        if not wanted:
+            return list(PROVINCES)
+        return [item for item in PROVINCES if item[0] in wanted]
 
     def school_page_request(self, ssdm, start):
         """院校库分页请求：ssdm 是省份码，start 是偏移量"""
@@ -332,11 +348,9 @@ class BaseSpider(scrapy.Spider):
         for unit in self.catalog.schools_of(ssdm):
             if self.school_limit_reached():
                 break
-            if unit.get('dwdm') in self._crawled_codes:
-                continue
-            self._crawled_codes.add(unit.get('dwdm'))
-            self._crawled_schools += 1
-            yield from self.school_requests(unit)
+            # 走 crawl_unit 而不是就地展开 —— "开始抓一所学校"只有这一处，
+            # 进度标记也只在这里发一次
+            yield from self.crawl_unit(unit)
 
         # 这个省翻完了，接着排下一个省
         if self._pending_provinces and not self.school_limit_reached():
@@ -460,6 +474,8 @@ class BaseSpider(scrapy.Spider):
             return
         self._crawled_codes.add(dwdm)
         self._crawled_schools += 1
+        emit_progress('school', index=self._crawled_schools,
+                      dwdm=dwdm, name=unit.get('dwmc') or '')
         yield from self.school_requests(unit)
 
     def school_limit_reached(self):
@@ -574,6 +590,7 @@ class BaseSpider(scrapy.Spider):
         定向抓取（schools: [南京大学]）时枚举到的只有一所，如果直接覆盖，
         会把之前生成好的全国清单冲掉 —— 所以这里只做合并、不做替换。
         """
+        emit_progress('done', schools=self._crawled_schools)
         if not self.catalog.count():
             return
         try:

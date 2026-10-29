@@ -423,3 +423,40 @@ def test_known_command_line_arguments_are_applied():
     spider = DummySpider(**{'output.directory': '/tmp/out', 'request.delay': '0.5'})
     assert spider.config.output_directory() == '/tmp/out'
     assert spider.config.delay() == 0.5
+
+
+# ----------------------------------------------------------------------
+# 省份筛选
+# ----------------------------------------------------------------------
+def test_province_limits_the_enumeration():
+    """限定省份时，第一个请求就是那个省
+
+    走院校库 sch/search.do?ssdm=xx，三个请求就能拿到全省的院校，
+    不用把每所院校展开成一次 dws.do 请求（那个接口匿名只能给 10 条）。
+    """
+    spider = DummySpider(schools='all', province=['32'])
+    requests = list(spider.begin_school_phase())
+    assert len(requests) == 1
+    assert 'ssdm=32' in requests[0].url
+
+
+def test_province_all_still_starts_from_first_province():
+    """不限省份还是从北京开始"""
+    spider = DummySpider(schools='all', province=['all'])
+    requests = list(spider.begin_school_phase())
+    assert 'ssdm=11' in requests[0].url
+
+
+def test_several_provinces_are_queued_in_order():
+    """多个省份按省份表里的顺序排，一个省翻完再排下一个"""
+    spider = DummySpider(schools='all', province=['32', '11'])
+    assert spider.pending_provinces() == [('11', '北京'), ('32', '江苏')]
+
+
+def test_province_is_ignored_when_schools_are_named():
+    """点名了具体院校时省份没有意义 —— 院校是直接按代码查的"""
+    spider = DummySpider(schools=['南京大学'], province=['32'])
+    spider.catalog_index.add({'dwdm': '10284', 'dwmc': '南京大学', 'szssm': '32'})
+    requests = list(spider.begin_school_phase())
+    assert len(requests) == 1
+    assert requests[0].url.endswith('/zsml/rs/dws.do')

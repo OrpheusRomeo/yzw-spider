@@ -19,6 +19,8 @@ try:
 except ImportError:  # pragma: no cover - 环境没装 PyYAML 时给出明确提示
     yaml = None
 
+from yzw.discovery import PROVINCE_NAMES
+
 
 # 项目根目录（yzw/config.py -> yzw/ -> 仓库根）
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -41,6 +43,7 @@ EXCEL_MODES = (EXCEL_AUTO, EXCEL_ALWAYS, EXCEL_NEVER)
 
 DEFAULTS: Dict[str, Any] = {
     'degree': DEGREE_MASTER,
+    'province': ALL,
     'schools': [],
     'extra_schools': [],
     'majors': ALL,
@@ -58,7 +61,7 @@ DEFAULTS: Dict[str, Any] = {
 }
 
 # 可以用命令行 -a 覆盖的顶层配置项
-OVERRIDE_KEYS = ('degree', 'schools', 'extra_schools', 'majors', 'cookie')
+OVERRIDE_KEYS = ('degree', 'province', 'schools', 'extra_schools', 'majors', 'cookie')
 
 # 可以用命令行 -a 覆盖的二级配置项，用点号路径写
 OVERRIDE_PATHS = (
@@ -80,6 +83,7 @@ class Config:
     """归一化之后的配置"""
 
     degrees: List[str] = field(default_factory=lambda: [DEGREE_MASTER])
+    province: Union[str, List[str]] = ALL
     schools: Union[str, List[str]] = field(default_factory=list)
     extra_schools: List[str] = field(default_factory=list)
     majors: Union[str, List[str]] = ALL
@@ -104,6 +108,15 @@ class Config:
     def all_schools(self) -> bool:
         """是否抓取全国全部院校"""
         return self.schools == ALL
+
+    def provinces(self) -> List[str]:
+        """要抓的省份码；不限（all）时返回空列表
+
+        只在"院校库逐省枚举"这条路上有用 —— 指定了具体院校时省份就没意义了。
+        """
+        if self.province == ALL:
+            return []
+        return list(self.province)
 
     def all_majors(self) -> bool:
         """是否抓取所选学校的全部专业"""
@@ -150,6 +163,7 @@ class Config:
         """
         data = {
             'degree': self.degrees if len(self.degrees) > 1 else self.degrees[0],
+            'province': self.province,
             'schools': self.schools,
             'extra_schools': self.extra_schools,
             'majors': self.majors,
@@ -220,6 +234,27 @@ def _as_str_list(value: Any, field_name: str) -> List[str]:
             names.extend(_split_names(str(item).strip()))
         return names
     raise ConfigError(f'配置项 {field_name} 类型不对，应为字符串或列表，实际是 {type(value).__name__}')
+
+
+def _as_provinces(value: Any) -> Union[str, List[str]]:
+    """省份码归一化：'all' / [] / '32,33' / ['32','33'] -> 'all' 或 ['32','33']
+
+    省份码必须能在研招网的省份表里找到，写错了直接报错 ——
+    静默跳过一个不存在的码，结果就是一个省都不抓，很难查。
+    """
+    codes = _as_name_list(value, 'province', ALL)
+    if codes == ALL:
+        return ALL
+    if not codes:
+        # 空列表 = 不限省份（默认值就是空）
+        return ALL
+
+    unknown = [code for code in codes if code not in PROVINCE_NAMES]
+    if unknown:
+        raise ConfigError(
+            '省份码 {} 不存在。可用省份码见 yzw/discovery.py 的 PROVINCES'.format(
+                '、'.join(unknown)))
+    return codes
 
 
 def _as_degrees(value: Any) -> List[str]:
@@ -314,6 +349,7 @@ def build_config(data: Dict[str, Any], source_path: str = '') -> Config:
 
     return Config(
         degrees=_as_degrees(data.get('degree')),
+        province=_as_provinces(data.get('province')),
         schools=_as_name_list(data.get('schools'), 'schools', []),
         extra_schools=_as_str_list(data.get('extra_schools'), 'extra_schools'),
         majors=_as_name_list(data.get('majors'), 'majors', ALL),

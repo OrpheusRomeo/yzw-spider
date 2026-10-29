@@ -14,6 +14,7 @@ import time
 
 from .config import build_config
 from .items import DoctorItem, MasterItem
+from .progress import PROGRESS_EVERY, emit_progress
 from .utils.csv_handler import CsvHandler
 from .utils.excel_handler import ExcelHandler
 
@@ -43,6 +44,9 @@ class BaseDirectoryPipeline(object):
     subdir = ''
     filename = ''
 
+    # 学位层次，进度标记里带着 —— 抓 all 时硕士 / 博士的计数要分得开
+    degree = ''
+
     def __init__(self, config=None, crawler=None):
         self.config = config or build_config({})
         self.date = '_' + time.strftime('%Y%m%d%H%M')
@@ -64,6 +68,10 @@ class BaseDirectoryPipeline(object):
 
         self.csv_handler = CsvHandler()
         self.json_fp = None
+
+        # 抓了多少条 —— Web 端靠进度标记显示"已抓 N 条"
+        self.item_count = 0
+        self._last_progress = 0
 
     @classmethod
     def from_crawler(cls, crawler):
@@ -98,6 +106,11 @@ class BaseDirectoryPipeline(object):
         # 攒 excel
         self.append_excel(item)
 
+        self.item_count += 1
+        if self.item_count - self._last_progress >= PROGRESS_EVERY:
+            self._last_progress = self.item_count
+            emit_progress('item', count=self.item_count, degree=self.degree)
+
         return item
 
     def append_excel(self, item):
@@ -121,6 +134,7 @@ class BaseDirectoryPipeline(object):
         self.excel.append_data(self.excel_file, university, item, self.head)
 
     def close_spider(self, spider=None):
+        emit_progress('done', items=self.item_count, degree=self.degree)
         if self.json_fp is not None:
             try:
                 self.json_fp.close()
@@ -141,6 +155,7 @@ class MasterPipeline(BaseDirectoryPipeline):
     item_class = MasterItem
     subdir = 'master'
     filename = 'master_directory'
+    degree = 'master'
 
 
 class DoctorPipeline(BaseDirectoryPipeline):
@@ -149,3 +164,4 @@ class DoctorPipeline(BaseDirectoryPipeline):
     item_class = DoctorItem
     subdir = 'doctor'
     filename = 'doctor_directory'
+    degree = 'doctor'

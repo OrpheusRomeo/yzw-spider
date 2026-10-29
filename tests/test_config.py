@@ -258,3 +258,57 @@ def test_env_cookie_overrides_file(monkeypatch, tmp_path):
 
     monkeypatch.delenv('YZW_COOKIE')
     assert load_config(str(path)).cookie == 'JSESSIONID=from-file'
+
+
+# ----------------------------------------------------------------------
+# 省份
+# ----------------------------------------------------------------------
+def test_province_defaults_to_all():
+    """不限省份 —— 逐省枚举时 31 个省都要跑"""
+    config = build_config({})
+    assert config.province == ALL
+    assert config.provinces() == []
+
+
+def test_province_accepts_code_list():
+    config = build_config({'province': ['32', '33']})
+    assert config.provinces() == ['32', '33']
+
+
+def test_province_all_means_unlimited():
+    """写 all 和不写一样 —— 都要跑全国"""
+    config = build_config({'province': 'all'})
+    assert config.province == ALL
+    assert config.provinces() == []
+
+
+def test_province_empty_list_means_unlimited():
+    config = build_config({'province': []})
+    assert config.province == ALL
+    assert config.provinces() == []
+
+
+def test_province_rejects_unknown_code():
+    """省份码写错要报错 —— 静默跳过的结果是一个省都不抓"""
+    with pytest.raises(ConfigError) as error:
+        build_config({'province': ['99']})
+    assert '99' in str(error.value)
+
+
+def test_override_keeps_province():
+    """回归测试：用 -a 覆盖别的项时，省份限制不能被悄悄丢掉
+
+    override() 是从零重建 data 再调 build_config() 的，
+    这里漏掉 province 的话，-a degree=doctor 就会让省份限制失效、变成全国全量。
+    """
+    config = build_config({'province': ['32']})
+    updated = config.override({'degree': 'doctor'})
+    assert updated.provinces() == ['32']
+    assert updated.degrees == [DEGREE_DOCTOR]
+
+
+def test_override_can_replace_province():
+    """province 也能用 -a 直接覆盖"""
+    config = build_config({'province': ['32']})
+    updated = config.override({'province': '31,32'})
+    assert updated.provinces() == ['31', '32']
