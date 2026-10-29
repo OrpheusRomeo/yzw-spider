@@ -18,6 +18,7 @@
 - [环境要求](#环境要求)
 - [安装](#安装)
 - [Docker 部署](#docker-部署)
+- [Web 控制台](#web-控制台)
 - [快速开始](#快速开始)
 - [配置说明](#配置说明)
 - [全量抓取](#全量抓取)
@@ -36,6 +37,7 @@
 
 - **配置驱动**：学位层次（硕士 / 博士 / 两者）、目标学校、目标专业、输出目录、限速全部由 `config.yaml` 决定。
 - **三种入口**：`master`（硕士）、`doctor`（博士）、`all`（两者一起抓），共用同一份配置。
+- **Web 控制台**：页面上选省份 / 院校 / 专业 / 学位层次就能开抓，实时看进度、日志和已抓条数，跑完直接下载结果（见 [Web 控制台](#web-控制台)）。
 - **粒度自动下钻**：专业写名字就行 —— `经济学` → 门类 `02`，`应用经济学` → 一级学科 `0202`，`西方经济学` → 专业 `020104`。
 - **层次字段齐全**：省份、学校代码、专业名称 / 代码、专业小类、专业大类一个不少，输出 22 列。
 - **多校区不漏**：写 `中国石油大学` 会把 (华东)、(北京) 两个校区都抓全；
@@ -125,6 +127,8 @@ ls config.yaml
 | `CONFIG_FILE` | `./config.yaml` | 配置文件在宿主机哪个位置 |
 | `USER_ID` / `GROUP_ID` | `1000` | 容器用户的 uid/gid，要和宿主机对上（`id -u` / `id -g`） |
 | `SPIDER` | `all` | 默认抓哪个入口：`master` / `doctor` / `all` |
+| `WEB_PORT` | `8000` | Web 控制台在宿主机上的端口（8000 被占了就改这里） |
+| `WEB_HOST` | `127.0.0.1` | Web 控制台监听地址。**这个服务没有认证**，默认只绑本机 |
 | `YZW_COOKIE` | 空 | 研招网登录态（可选，见下） |
 
 > 存储目录写成**绝对路径**也行，比如 `RESULT_DIR=/mnt/data/yzw`。
@@ -243,6 +247,118 @@ docker compose run --rm --entrypoint bash yzw
 
 ---
 
+## Web 控制台
+
+不想改 `config.yaml`、不想开终端盯日志的话，起一个网页控制台：
+在页面上选**省份 / 院校 / 专业 / 学位层次**，点「开始抓取」，
+页面上实时显示状态、已抓条数和日志，跑完直接下载结果文件。
+
+爬虫本身的行为一行没变 —— 老的 `scrapy crawl` 用法和 YAML 配置照旧可用，
+Web 只是多了一个驱动入口。
+
+### 长什么样
+
+```
+┌─────────────────────────────────────────────┬──────────────────────────────┐
+│ 抓取目标                                     │ 任务                         │
+│   学位层次  [硕士][博士][全部]               │  [抓取中] 已抓 1234 条        │
+│   省份      [江苏 ▾]  （不选 = 全国）        │  院校 12 所  耗时 8 分 20 秒  │
+│   院校      ☑ 抓全部院校                     │  ┌──────────────────────────┐ │
+│   专业      ☑ 抓全部专业  [查该校专业]       │  │ 日志实时滚动…             │ │
+│   ▸ 高级选项（限速 / 试跑 / Excel）          │  └──────────────────────────┘ │
+│   [开始抓取]                                 ├──────────────────────────────┤
+└─────────────────────────────────────────────┴──────────────────────────────┤
+                                                       结果文件（可下载）      │
+```
+
+### 怎么起
+
+Docker（推荐）：
+
+```bash
+docker compose up -d web runner
+# 打开 http://localhost:8000
+```
+
+> 8000 端口被占了的话，改 `.env` 里的 `WEB_PORT`（比如 `8900`），
+> 然后 `docker compose up -d web runner` 重新起，访问 `http://localhost:8900`。
+
+本地开发：
+
+```bash
+# 后端依赖
+pip install -r requirements-web.txt
+
+# 前端（另开一个终端）
+cd frontend && npm install && npm run dev    # http://localhost:5173
+
+# 后端 + 执行器（再开两个终端）
+uvicorn web.runner:app --port 8001
+uvicorn web.app:app    --port 8000
+```
+
+### 它是怎么搭的
+
+```
+浏览器 (Vue 3 + Element Plus)
+   │  轮询 2 秒：GET /api/jobs/{id} + /api/jobs/{id}/logs?offset=N
+   ▼
+web 容器 (FastAPI，端口 8000，对外)
+   ├─ 选项      ← 读共享卷 data/schools.json、data/codes.json
+   ├─ 调度      ← 写 data/jobs/<id>/config.yaml，再调执行器
+   ├─ 状态/日志 ← 读共享卷 data/jobs/<id>/status.json、log
+   └─ 结果      ← 读共享卷 result/
+   │  HTTP（只 3 个端点）
+   ▼
+runner 容器 (FastAPI，端口 8001，只在 compose 内网)
+   └─ 子进程：python -m scrapy crawl master|doctor|all -a config=<生成的 yaml>
+      cwd=/app，日志和状态写回共享卷
+```
+
+**为什么爬虫要跑在子进程里**：Twisted 的 reactor 是**进程级单例且不可重启**，
+同一个进程里跑完第一个任务，第二个任务必然 `ReactorNotRestartable`。
+子进程顺带解决崩溃隔离、内存隔离、日志流式输出三个问题。
+
+**为什么拆成两个容器**：研招网限流很硬，同时只该跑一个爬虫；
+把"页面"和"抓取"分开，抓取的重活不会把页面拖慢，两者只靠共享卷传文件。
+
+### 接口
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/options/provinces` | 31 个省 + 各省院校数 |
+| GET | `/api/options/schools?province=32&kw=南京` | 院校列表 |
+| GET | `/api/options/majors` | 门类 / 一级学科代码表 |
+| GET | `/api/majors-of-school?dwdm=10284` | 实时查某校开设的专业 |
+| POST | `/api/jobs` | 新建任务（已有任务在跑 → 409） |
+| GET | `/api/jobs` | 任务列表 |
+| GET | `/api/jobs/{id}` | 任务状态 |
+| GET | `/api/jobs/{id}/logs?offset=&limit=` | 增量日志 |
+| POST | `/api/jobs/{id}/stop` | 停止任务 |
+| GET | `/api/results` | 结果文件列表 |
+| GET | `/api/results/download?path=` | 下载结果文件 |
+
+执行器（`web.runner`）另外有 `POST /run`、`POST /stop/{id}`、`GET /codes`、
+`GET /majors-of-school`、`GET /health`。
+
+### 几个要注意的地方
+
+- **没有认证**。默认只绑 `127.0.0.1`（`.env` 的 `WEB_HOST`）。
+  要给内网其他人用就改成 `0.0.0.0`，但要自己确保网络是可信的 ——
+  任何人都能通过这个页面启动爬虫、下载结果。
+- **登录态只走环境变量** `YZW_COOKIE`，不会写进生成的 `config.yaml`，
+  也不会回显到页面上。
+- **同时只跑一个任务**。研招网扛不住并发，而且两个爬虫同时写
+  `data/schools.json`（`merge_catalog` 是"读-改-写"）会互相覆盖。
+  页面上的第二个任务会直接被拒（409）。
+- **别和 `yzw` 服务同时跑**。`docker compose up -d yzw` 是一次性任务，
+  和网页任务抢同一个 `data/schools.json`。
+- **专业列表可能不全**。研招网的 `dwzys.do` 匿名状态下每个接口只给 10 条，
+  页面上的「查该校专业」会按 14 个门类分别去查，凑出来的结果仍然可能缺；
+  配了 `YZW_COOKIE` 才能翻页取全。
+
+---
+
 ## 快速开始
 
 ```bash
@@ -267,6 +383,7 @@ scrapy crawl all
 scrapy crawl master -a config=other.yaml           # 用另一份配置文件
 scrapy crawl all    -a degree=both                 # 命令行临时改学位层次
 scrapy crawl master -a schools=all                 # 命令行临时抓全国
+scrapy crawl master -a schools=all -a province=32   # 只枚举江苏省的院校
 scrapy crawl master -a schools=南京大学,南开大学     # 逗号分隔多个
 scrapy crawl master -a majors=应用经济学,金融学      # 专业同理
 scrapy crawl master -a extra_schools=某某大学        # 补漏的院校
@@ -277,7 +394,7 @@ scrapy crawl master -s LOG_LEVEL=INFO              # 调整日志级别
 ```
 
 > 命令行能覆盖这些项：
-> `degree`、`schools`、`extra_schools`、`majors`、`cookie`，
+> `degree`、`province`、`schools`、`extra_schools`、`majors`、`cookie`，
 > 以及 `output.directory`、`output.excel`、`output.excel_max_schools`、
 > `request.delay`、`request.concurrency`、`request.max_schools`。
 >
@@ -305,6 +422,7 @@ scrapy crawl master -s LOG_LEVEL=INFO              # 调整日志级别
 | 配置项 | 取值 | 说明 |
 | --- | --- | --- |
 | `degree` | `master` / `doctor` / `both` | 学位层次。`both` 等价于硕士 + 博士 |
+| `province` | 列表 | 限定省份（省份码，如 `32` = 江苏）。`- all` / 不写 = 全国 31 个省；只在"枚举全部院校"这条路上有用 |
 | `schools` | 列表 | 目标学校，**一律用列表写**。`- all` = 全国全部；否则填校名（`南京大学`）或招生单位代码（`10284`） |
 | `extra_schools` | 列表 | 手工补漏的院校。指定模式下追加在 `schools` 后面；`schools: [- all]` 时在省份枚举跑完后补上 |
 | `majors` | 列表 | 目标专业，**一律用列表写**。`- all` = 所选学校的全部专业；否则填专业名或专业代码 |
@@ -472,6 +590,16 @@ python scripts/build_school_catalog.py
 枚举是**逐省推进**的：一个省翻完再排下一个省。所以 `request.max_schools` 到量就能停下来，
 不会把 31 个省的白名单全跑一遍。
 
+枚举也可以**只跑某几个省**（`province`）—— 省份码用的是研招网那套
+（`11` 北京 / `32` 江苏 / `61` 陕西 …，共 31 个，写错会直接报错）：
+
+```yaml
+province:
+  - "32"      # 只枚举江苏，3 个请求就拿到全省 56 所院校
+```
+
+全国要 61 个请求，只跑江苏 3 个就够 —— 只想要某几所学校、又懒得一个个填的时候很好用。
+
 `extra_schools` 在全量模式下同样生效 —— 省份枚举全部跑完后会再补一次，
 用来兜底"院校库里没收录、枚举漏掉"的院校；已经被枚举抓到过的不会重复抓。
 
@@ -518,33 +646,60 @@ Docker 部署时更方便，不用把登录态写进配置文件。）
 ```
 yzw-spider/
 ├── config.yaml                # ★ 唯一的配置入口：学校 / 专业 / 学位层次 / 限速 / 输出
-├── requirements.txt            # 依赖清单
+├── requirements.txt            # 爬虫依赖清单
+├── requirements-web.txt        # Web 控制台的依赖（fastapi / uvicorn / httpx）
 ├── scrapy.cfg                  # Scrapy 项目配置（入口设置 yzw.settings）
-├── Dockerfile                  # 容器镜像（python:3.13-slim）
-├── docker-compose.yml          # 编排 + 持久化挂载
+├── Dockerfile                  # 爬虫容器镜像（python:3.13-slim）
+├── Dockerfile.web              # Web 控制台镜像（node 打包前端 + python 运行时）
+├── docker-compose.yml          # 编排 + 持久化挂载（yzw / web / runner）
 ├── .env                        # 部署环境变量（时区 / 存储目录 / 用户 / cookie），不入库
 ├── .env.example                # .env 的模板
 ├── .dockerignore
 ├── LICENSE                     # MIT
 ├── README.md
 ├── data/
-│   └── schools.json            # 全国招生单位清单（936 所，爬虫自动维护）
+│   ├── schools.json            # 全国招生单位清单（936 所，爬虫自动维护）
+│   ├── codes.json              # 门类 / 一级学科代码表缓存（Web 用，7 天过期）
+│   └── jobs/                   # 网页任务的配置 / 日志 / 状态（不入库）
 ├── result/                     # 爬取结果输出目录（自动创建）
 │   ├── master/                 # 硕士数据：csv / json / xlsx
 │   └── doctor/                 # 博士数据：csv / json / xlsx
+├── frontend/                   # Web 控制台前端（Vue 3 + Vite + Element Plus）
+│   ├── package.json
+│   ├── vite.config.js
+│   ├── index.html
+│   └── src/
+│       ├── main.js             # 挂载 + Element Plus 中文语言包
+│       ├── api.js              # 后端接口封装
+│       ├── App.vue             # 单页布局
+│       └── components/
+│           ├── TargetForm.vue  # 目标选择：省份 / 院校 / 专业 / 学位
+│           ├── JobPanel.vue     # 状态、计数、日志窗口
+│           └── ResultPanel.vue  # 结果文件列表与下载
 ├── scripts/
 │   └── build_school_catalog.py # 单独重建 data/schools.json
 ├── tests/                      # pytest 用例
 │   ├── test_config.py          # 配置层的解析、归一化、校验
 │   ├── test_codes.py           # 学科代码表与院校清单
-│   └── test_spiders.py         # 爬虫调度：枚举分支、去重
+│   ├── test_spiders.py         # 爬虫调度：枚举分支、去重
+│   ├── test_progress.py        # 进度标记的发出与解析
+│   ├── test_web.py             # Web 后端：配置生成、路径安全、任务接口
+│   └── test_runner.py          # 执行器：起任务、读日志、停任务
+├── web/                        # Web 控制台后端
+│   ├── app.py                  # 对外的接口 + 前端静态文件托管
+│   ├── runner.py               # 执行器：拉起爬虫子进程、读日志、写状态
+│   ├── jobs.py                 # 任务配置生成、状态与日志读写
+│   ├── options.py              # 选项数据源：省份、院校
+│   ├── majors.py               # 代码表缓存、某校专业查询
+│   └── schemas.py              # 接口的数据模型
 └── yzw/
     ├── config.py               # 配置加载、归一化、校验
     ├── codes.py                # 门类 / 一级学科 / 专业代码表
     ├── discovery.py            # 院校库枚举（按省翻页）
     ├── items.py                # MasterItem / DoctorItem 字段定义
-    ├── middlewares.py          # 限流退避重试中间件
+    ├── middlewares.py          # 限流退避重试中间件 + 登录态注入
     ├── pipelines.py            # MasterPipeline / DoctorPipeline，文件落盘
+    ├── progress.py             # 进度标记（Web 端靠它统计进度）
     ├── settings.py             # 项目配置（限速、UA、pipeline 注册）
     ├── spiders/
     │   ├── base.py             # BaseSpider：配置装载、枚举调度、代码表
