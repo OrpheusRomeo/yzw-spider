@@ -854,7 +854,7 @@ result/doctor/doctor_directory_202610281704.xlsx
 
 | spider | 文件 | 说明 |
 | --- | --- | --- |
-| `master` | `result/master/master_directory_<YYYYMMDDHHMM>.csv` | 逗号分隔，含表头 |
+| `master` | `result/master/master_directory_<YYYYMMDDHHMM>.csv` | 逗号分隔，含表头，**UTF-8 + BOM**（Excel 直接能开） |
 | `master` | `result/master/master_directory_<YYYYMMDDHHMM>.json` | **每行一个 JSON 对象**（JSON Lines） |
 | `master` | `result/master/master_directory_<YYYYMMDDHHMM>.xlsx` | Excel，按学校分 sheet |
 | `doctor` | `result/doctor/doctor_directory_<YYYYMMDDHHMM>.csv` | 同上 |
@@ -863,6 +863,11 @@ result/doctor/doctor_directory_202610281704.xlsx
 
 几个容易踩的细节：
 
+- **CSV 带 UTF-8 BOM，`.json` 不带**。CSV 是给人用 Excel 打开的，
+  没有 BOM 的话 Excel（Windows 中文版）会按系统 ANSI 代码页（GBK）解码，
+  打开就是满屏 `鍗椾含澶у`；有了 BOM 它才认得出 UTF-8。
+  `.json` 是给程序读的（JSON Lines），加 BOM 会让 `json.loads` 直接报错，所以不加。
+  用 pandas 读 CSV 要写 `encoding='utf-8-sig'`（`utf-8` 也能读，会把 BOM 留在第一列名上）。
 - **三种格式共用同一个时间戳**：同一次运行生成的文件只差扩展名。
 - **时间戳是爬取启动时刻**，不是第一条数据落盘的时刻 —— pipeline 在 crawler 初始化时就创建好了。
 - **文件是懒创建的**：目录和文件都等到第一条数据写入时才建。所以只跑 `master` 时

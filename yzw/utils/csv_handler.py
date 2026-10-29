@@ -2,6 +2,13 @@
 import csv
 import os
 
+# CSV 用 UTF-8 + BOM 写。
+#
+# 没有 BOM 的话，Excel（Windows 中文版）会按系统 ANSI 代码页（GBK）解码，
+# 打开就是满屏"鍗椾含澶у"；WPS / LibreOffice / pandas 也要手动指定编码才行。
+# 加上 BOM 之后 Excel 会自己认出 UTF-8。
+CSV_ENCODING = 'utf-8-sig'
+
 
 class CsvHandler(object):
     """CSV 写入：首次写入时自动补表头"""
@@ -17,7 +24,7 @@ class CsvHandler(object):
             os.makedirs(directory, exist_ok=True)
 
         if not os.path.exists(path) or os.path.getsize(path) == 0:
-            with open(path, 'w', encoding='utf-8', newline='') as file:
+            with open(path, 'w', encoding=CSV_ENCODING, newline='') as file:
                 csv.writer(file).writerow(head)
 
     def import_data(self, item, path=None, head=None):
@@ -38,7 +45,10 @@ class CsvHandler(object):
                     'ResearchInterests', 'Teacher', 'StudentNo', 'Content']
 
         exists = os.path.exists(path) and os.path.getsize(path) > 0
-        with open(path, 'a', encoding='utf-8', newline='') as file:
+        # 只在文件是空的时候写 BOM —— BOM 只能待在文件头，
+        # 夹在中间会把那一行弄乱，Excel 之后也认不出这个文件了
+        encoding = 'utf-8' if exists else CSV_ENCODING
+        with open(path, 'a', encoding=encoding, newline='') as file:
             writer = csv.writer(file)
             if not exists:
                 writer.writerow(head)
