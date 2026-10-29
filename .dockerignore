@@ -1,0 +1,19 @@
+# 版本库和本地缓存
+.git
+.gitignore
+.claude
+.pytest_cache
+**/__pycache__
+*.pyc
+.vscode
+
+# 抓取结果不用进镜像（compose 会挂宿主机目录进来）
+result/
+result_test*/
+
+# 测试不进镜像
+tests/
+
+# 注意：config.yaml 和 data/schools.json 要留在镜像里
+#   config.yaml       默认配置
+#   data/schools.json 院校清单（936 所），少了它容器里第一次跑要先枚举全国

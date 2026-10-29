@@ -1,7 +1,7 @@
 # yzw-spider · 研究生招生目录爬虫
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
-[![Scrapy](https://img.shields.io/badge/scrapy-2.13--2.17-green.svg)](https://scrapy.org/)
+[![Scrapy](https://img.shields.io/badge/scrapy-2.13--2.19-green.svg)](https://scrapy.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 基于 [Scrapy](https://scrapy.org/) 的研究生招生专业目录爬虫，抓取[中国研究生招生信息网](https://yz.chsi.com.cn/)的**硕士 / 博士**招生目录，解析出院校、学院、专业、研究方向、指导教师、拟招人数、初试科目等信息，并导出为 **CSV / JSON / Excel** 三种格式。
@@ -17,6 +17,7 @@
 - [功能特性](#功能特性)
 - [环境要求](#环境要求)
 - [安装](#安装)
+- [Docker 部署](#docker-部署)
 - [快速开始](#快速开始)
 - [配置说明](#配置说明)
 - [全量抓取](#全量抓取)
@@ -43,6 +44,7 @@
 - **走 JSON 接口**：直接调用研招网的目录查询接口，不解析 HTML 列表页，页面改版时受影响更小。
 - **字段完整**：院校、学院、专业、研究方向、指导教师、拟招人数、学习方式、考试方式、备注，以及初试科目 1–4。
 - **多格式导出**：同一份数据同时写出 CSV、JSON、Excel 三种格式，文件名带运行时间戳。
+- **Docker 一键部署**：不用在机器上装 Python，`docker compose up -d` 就能跑；结果落在宿主机目录，容器删了数据还在。
 - **Excel 分校分表**：按学校名自动建 sheet，列顺序与表头严格对齐；学校太多时自动放弃 Excel，只留 CSV / JSON。
 - **限流自动退避**：接口返回"访问太频繁"时自动等待重试，不会静默丢数据。
 - **不静默失败**：目标为空、学位层次对不上、校名/专业名对不上、明细超出接口上限 —— 都在日志里明确报出来。
@@ -54,7 +56,7 @@
 | 项目 | 要求 |
 | --- | --- |
 | Python | 3.10+（实测 3.12.13 / 3.13.13） |
-| Scrapy | 2.13 ~ 2.17 |
+| Scrapy | 2.13 ~ 2.19（实测 2.17.0 / 2.19.0） |
 | 操作系统 | Linux / macOS / Windows 均可 |
 
 > 爬虫在基类里同时提供了 `start_requests()` 和 `async def start()`，因此 Scrapy 2.16 前后都能正常启动，
@@ -92,6 +94,155 @@ pip install -r requirements.txt
 
 ---
 
+## Docker 部署
+
+不想在机器上装 Python？用 Docker 跑。仓库里已经带了 `Dockerfile` 和 `docker-compose.yml`，
+抓取结果落在宿主机目录里，容器删了数据还在。
+
+### 1. 准备
+
+```bash
+# 复制一份环境变量模板（.env 不入库，.env.example 是模板）
+cp .env.example .env
+
+# 确认 config.yaml 在（目标学校 / 专业 / 层次都在里面改）
+ls config.yaml
+```
+
+> `config.yaml` 必须存在。compose 用的是"绑定挂载"，
+> 文件不存在时 Docker 会**创建一个同名目录**顶替它，容器里就会报"配置文件读取失败"。
+
+### 2. `.env` 里都有什么
+
+`docker compose` 会自动读项目根目录下的 `.env`，把里面的值填进 `docker-compose.yml`
+的 `${...}` 占位符。模板见 `.env.example`：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `TZ` | `Asia/Shanghai` | 容器时区。**改完要重新 `docker compose build`** —— 时区是烤进镜像的 |
+| `RESULT_DIR` | `./result` | 抓取结果放在宿主机哪个目录 |
+| `DATA_DIR` | `./data` | 院校清单缓存放在宿主机哪个目录 |
+| `CONFIG_FILE` | `./config.yaml` | 配置文件在宿主机哪个位置 |
+| `USER_ID` / `GROUP_ID` | `1000` | 容器用户的 uid/gid，要和宿主机对上（`id -u` / `id -g`） |
+| `SPIDER` | `all` | 默认抓哪个入口：`master` / `doctor` / `all` |
+| `YZW_COOKIE` | 空 | 研招网登录态（可选，见下） |
+
+> 存储目录写成**绝对路径**也行，比如 `RESULT_DIR=/mnt/data/yzw`。
+> 容器里的挂载点是固定的（`/app/result`、`/app/data`），换宿主机路径不用改容器内部。
+
+### 3. 造镜像
+
+```bash
+docker compose build
+```
+
+镜像基于 `python:3.13-slim`，`pip install -r requirements.txt`，
+以 `.env` 里 `USER_ID`/`GROUP_ID` 指定的普通用户跑（和宿主机用户对得上，
+挂出来的文件不会被 root 占住）。时区取 `.env` 的 `TZ`，
+同时写进 `TZ` 环境变量和 `/etc/localtime`，输出文件名里的时间戳和本地一致。
+
+### 4. 开跑
+
+```bash
+# 后台跑（推荐，全量要跑十几个小时）
+docker compose up -d
+
+# 跟日志
+docker compose logs -f
+
+# 看还在不在跑
+docker compose ps        # 跑完就退出了，用 ps -a 能看到已退出的容器和退出码
+docker compose ps -a
+
+# 跑完了收工（数据不丢）
+docker compose down
+```
+
+临时跑一次别的组合：
+
+```bash
+docker compose run --rm yzw crawl master -a degree=master -a schools=南京大学
+docker compose run --rm yzw crawl all    -a degree=both
+```
+
+### 5. 文件怎么持久化
+
+`docker-compose.yml` 里三个挂载，宿主机那一侧来自 `.env`：
+
+| 容器里 | 宿主机上（`.env`） | 放什么 |
+| --- | --- | --- |
+| `/app/result` | `RESULT_DIR`（默认 `./result`） | 抓取结果：`master/` `doctor/` 下的 CSV / JSONL / Excel |
+| `/app/data` | `DATA_DIR`（默认 `./data`） | 院校清单缓存 `schools.json`（容器里枚举到的招生单位会写回来） |
+| `/app/config.yaml` | `CONFIG_FILE`（默认 `./config.yaml`） | 目标学校 / 专业 / 学位层次（只读挂载） |
+
+```bash
+# 宿主机上直接看结果，和在容器里跑没区别
+ls -l result/master/
+```
+
+数据全在宿主机上，所以：
+
+- `docker compose down` / `docker rm` 都不影响已有结果
+- 换台机器只要把 `result/` 和 `data/` 拷过去就行
+- 想要备份的话，备份 `result/` 就够了
+
+### 6. 传登录态（可选）
+
+匿名状态下研招网每个接口只给 10 条数据，配了 cookie 才能翻页。
+在 `.env` 里填就行，不用改 `config.yaml`：
+
+```
+YZW_COOKIE=JSESSIONID=xxx; CHSICC_CLIENTFLAGZSML=xxx
+```
+
+```bash
+docker compose up -d
+```
+
+cookie 的传递链路是：
+
+```
+.env 的 YZW_COOKIE  →  容器环境变量  →  配置对象 config.cookie
+→  下载中间件 LoginCookieMiddleware  →  request.cookies
+→  Scrapy 自带的 CookiesMiddleware  →  Cookie 请求头
+```
+
+> cookie 等于登录态，`.env` 已经加进 `.gitignore`，别手动提交上去。
+>
+> 顺带一提：Scrapy 没有 `COOKIES` 这个设置项（只有 `COOKIES_ENABLED` / `COOKIES_DEBUG`），
+> 在 `apply_settings` 里 `settings.set('COOKIES', ...)` 是不管用的 ——
+> 登录态只能挂到 `request.cookies` 上，才会被写进请求头。
+> 而且这个中间件必须是**下载中间件**：Scrapy 2.17 起的 spider middleware
+> 已经不支持 `process_request` 了，注册成 spider middleware 会被静默忽略。
+
+### 7. 常见用法
+
+```bash
+# 改完 config.yaml 后重新跑（不用重建镜像，改的是挂载进去的文件）
+docker compose up -d --force-recreate
+
+# 改完 .env 里的路径 / SPIDER 之后（只有 TZ 需要重建镜像）
+docker compose up -d --force-recreate
+
+# 看容器里的时区和用户对不对
+docker compose run --rm --entrypoint sh yzw -c 'date; id'
+
+# 进容器里手动排查
+docker compose run --rm --entrypoint bash yzw
+```
+
+### 8. 全量跑要多久
+
+全量 = 936 所院校 × 全部专业，约 15 ~ 25 万次请求，**十几到几十小时**。
+容器是按"长跑"设计的：`restart: "no"`（跑完就退出，不自动重跑），
+断电重启后用 `docker compose up -d` 重新起一次即可 —— 已经抓到的结果留在 `./result` 里，
+但注意**同名文件会按时间戳另存一份**，不会覆盖（文件名带 `_<年月日时分>`）。
+
+> 想断点续跑，先把 `result/` 里的文件名去掉时间戳那一段，
+> 再把 `data/schools.json` 一起带上（里面记着已枚举到的院校）。
+
+---
+
 ## 快速开始
 
 ```bash
@@ -118,11 +269,20 @@ scrapy crawl all    -a degree=both                 # 命令行临时改学位层
 scrapy crawl master -a schools=all                 # 命令行临时抓全国
 scrapy crawl master -a schools=南京大学,南开大学     # 逗号分隔多个
 scrapy crawl master -a majors=应用经济学,金融学      # 专业同理
+scrapy crawl master -a extra_schools=某某大学        # 补漏的院校
+scrapy crawl master -a output.directory=./out       # 换输出目录
+scrapy crawl master -a request.delay=0.5            # 临时调限速
+scrapy crawl master -a request.max_schools=3        # 只抓前 3 所（试跑）
 scrapy crawl master -s LOG_LEVEL=INFO              # 调整日志级别
 ```
 
-> 命令行参数只覆盖 `config` / `degree` / `schools` / `majors` / `cookie` 这几项，
-> 限速、输出目录等还是在 `config.yaml` 里改。
+> 命令行能覆盖这些项：
+> `degree`、`schools`、`extra_schools`、`majors`、`cookie`，
+> 以及 `output.directory`、`output.excel`、`output.excel_max_schools`、
+> `request.delay`、`request.concurrency`、`request.max_schools`。
+>
+> **参数名写错会直接报错退出**，不会被静默忽略 —— 以前 `-a output.directory=xxx`
+> 拼错成 `output.dir` 就会悄悄写到默认目录去。
 >
 > 命令行只能传字符串，所以多个值用**逗号分隔**（中英文逗号都认）。
 >
@@ -154,7 +314,7 @@ scrapy crawl master -s LOG_LEVEL=INFO              # 调整日志级别
 | `request.delay` | 秒 | 同一站点两次请求的间隔，默认 3 |
 | `request.concurrency` | 整数 | 并发数，默认 1 |
 | `request.max_schools` | 整数 | `>0` 只抓前 N 所学校（试跑用），`0` = 不限，默认 0 |
-| `cookie` | 字符串 | 研招网登录态 cookie，可选 |
+| `cookie` | 字符串 | 研招网登录态 cookie，可选。环境变量 `YZW_COOKIE` 优先于这里的值 |
 
 ### 目标学校怎么写
 
@@ -346,6 +506,9 @@ python scripts/build_school_catalog.py
 cookie: "JSESSIONID=xxxxxxxx; CHSICC_CLIENTFLAGZSML=xxxxxxxx"
 ```
 
+（也可以用环境变量 `YZW_COOKIE` 传，优先级比 `config.yaml` 高 ——
+Docker 部署时更方便，不用把登录态写进配置文件。）
+
 `start` 翻页就能用，"每页 10 条"的限制随之消失，枚举也不必再靠收窄条件绕。
 
 ---
@@ -357,6 +520,11 @@ yzw-spider/
 ├── config.yaml                # ★ 唯一的配置入口：学校 / 专业 / 学位层次 / 限速 / 输出
 ├── requirements.txt            # 依赖清单
 ├── scrapy.cfg                  # Scrapy 项目配置（入口设置 yzw.settings）
+├── Dockerfile                  # 容器镜像（python:3.13-slim）
+├── docker-compose.yml          # 编排 + 持久化挂载
+├── .env                        # 部署环境变量（时区 / 存储目录 / 用户 / cookie），不入库
+├── .env.example                # .env 的模板
+├── .dockerignore
 ├── LICENSE                     # MIT
 ├── README.md
 ├── data/

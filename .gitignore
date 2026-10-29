@@ -11,3 +11,6 @@
 /result/
 /result_test*/
 /result*/
+
+# Docker 相关
+.env

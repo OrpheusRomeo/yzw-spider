@@ -1,0 +1,43 @@
+# 研招网爬虫 —— 一次性任务，跑完就退出
+#
+#   docker compose build            # 造镜像
+#   docker compose up -d            # 后台开跑
+#   docker compose logs -f          # 跟日志
+#   docker compose ps -a            # 看跑完没有（退出码多少）
+#   docker compose down             # 收工（数据不丢）
+#
+#   # 临时跑一次别的组合
+#   docker compose run --rm yzw crawl master -a degree=master -a schools=南京大学
+#
+# 持久化：下面三个挂载都是宿主机目录，容器删了数据还在
+#   ./result          抓取结果（CSV / JSONL / Excel）
+#   ./data            院校清单缓存（容器里枚举到的招生单位会写回来）
+#   ./config.yaml     目标学校 / 专业 / 学位层次（只读挂载，改完重启容器即可生效）
+#
+# 路径、时区、用户这些都在 .env 里配（模板见 .env.example）。
+services:
+  yzw:
+    build:
+      context: .
+      args:
+        # 时区由 .env 的 TZ 决定，烤进镜像（/etc/localtime 和 TZ 环境变量都设）
+        TZ: "${TZ:-Asia/Shanghai}"
+        # 让容器里的用户和宿主机用户对上，挂出来的文件才不会被 root 占住
+        USER_ID: "${USER_ID:-1000}"
+        GROUP_ID: "${GROUP_ID:-1000}"
+    image: yzw-spider:latest
+    container_name: yzw-spider
+    # 抓取是一次性任务，抓完就退出；崩了也不自动重跑
+    restart: "no"
+    volumes:
+      # 宿主机路径由 .env 决定，容器里的挂载点是固定的
+      - "${RESULT_DIR:-./result}:/app/result"
+      - "${DATA_DIR:-./data}:/app/data"
+      - "${CONFIG_FILE:-./config.yaml}:/app/config.yaml:ro"
+    environment:
+      TZ: "${TZ:-Asia/Shanghai}"
+      YZW_CONFIG: /app/config.yaml
+      # 配了登录态才能翻页（匿名状态每个接口只给 10 条）。
+      # 在 .env 里填 YZW_COOKIE 即可，别写进 config.yaml
+      YZW_COOKIE: "${YZW_COOKIE:-}"
+    command: ["crawl", "${SPIDER:-all}"]

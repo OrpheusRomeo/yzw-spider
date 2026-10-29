@@ -2,11 +2,12 @@
 #
 # Scrapy 版本说明：
 #   本项目的 spider 用 start_requests() 生成初始请求，并在基类里显式提供了
-#   async def start() 转发，因此 2.13 ~ 2.17 都能正常启动。
+#   async def start() 转发，因此 2.13 ~ 2.19 都能正常启动。
 #   （Scrapy 2.16 起不再自动调度 start_requests()，只靠它会在启动时报
 #    ValueError: Missing scheme in request url: h）
-#   中间件和 pipeline 的方法签名也按 2.17 的约定写：spider 参数改为可选，
-#   拿不到时用 from_crawler() 里存的 crawler.spider 兜底。
+#   中间件和 pipeline 的方法签名也按 2.17+ 的约定写：spider 参数改为可选，
+#   拿不到时用 from_crawler() 里存的 crawler.spider 兜底；
+#   限流中间件的 process_response 写成协程（2.17+ 不接受返回 Deferred）。
 Scrapy>=2.13,<3
 
 # 读 config.yaml
