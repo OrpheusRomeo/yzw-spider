@@ -7,10 +7,11 @@ Scrapy 自带的重试只看状态码（5xx / 429），这种"伪成功"的响�
 
 这里在下载中间件里把这种响应认出来，退避一段时间后重发同一个请求。
 """
+import asyncio
 import json
 import logging
 
-from twisted.internet.task import deferLater
+from yzw.config import parse_cookie_header
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ class ThrottleRetryMiddleware(object):
             return spider
         return getattr(self.crawler, 'spider', None)
 
-    def process_response(self, request, response, spider=None):
+    async def process_response(self, request, response, spider=None):
         if not self.is_throttled(response):
             return response
 
@@ -66,9 +67,13 @@ class ThrottleRetryMiddleware(object):
         # 同一个 URL 重发，必须绕开去重
         new_request.dont_filter = True
 
-        # 延迟到点再把请求交回给引擎
-        from twisted.internet import reactor
-        return deferLater(reactor, wait, lambda: new_request)
+        # 延迟到点再把请求交回给引擎。
+        # 这里用协程而不是直接返回 Deferred —— Scrapy 2.17+ 会对返回 Deferred
+        # 的 process_response 报 ScrapyDeprecationWarning。
+        # 用 asyncio.sleep 而不是 Twisted 的 deferLater：协程里 await 一个
+        # 外部 Deferred 会被 Twisted 判成 "Task got bad yield"。
+        await asyncio.sleep(wait)
+        return new_request
 
     def log(self, level, message, *args):
         """记日志 —— spider 拿不到时退回模块级 logger"""
@@ -97,3 +102,41 @@ class ThrottleRetryMiddleware(object):
 
         message = str(data.get('msg') or '')
         return any(word in message for word in THROTTLE_KEYWORDS)
+
+
+class LoginCookieMiddleware(object):
+    """把配置里的研招网登录态挂到每个请求上
+
+    Scrapy 没有 COOKIES 这个设置项（只有 COOKIES_ENABLED / COOKIES_DEBUG），
+    设了也不会发出去 —— 登录态必须挂到 request.cookies 上，
+    再由 Scrapy 自带的 CookiesMiddleware 写进 Cookie 请求头。
+
+    挂在 request.cookies 上（而不是直接写 Cookie 头）是为了保留服务端的更新：
+    服务端 Set-Cookie 换新的 JSESSIONID 时，cookie jar 里两份都在，
+    不会因为写死了一个旧值就发不出去。
+
+    这里必须做成**下载中间件**（DOWNLOADER_MIDDLEWARES）：
+    Scrapy 2.17 起的 spider middleware 已经不支持 process_request 了
+    （只剩 process_spider_input / process_start / process_spider_output /
+    process_spider_exception），写成 spider middleware 会被静默忽略 ——
+    中间件注册了、请求也发了，就是没有 Cookie 头。
+
+    优先级要小于 CookiesMiddleware 的 700：下载中间件的 process_request
+    按优先级从小到大执行，我们得赶在它前面把 cookie 塞进 request.cookies。
+    """
+
+    def __init__(self, cookies=None):
+        self.cookies = cookies or {}
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        """从 spider 写进 settings 的配置里拿登录态"""
+        config = crawler.settings.get('YZW_CONFIG_DATA')
+        cookie = getattr(config, 'cookie', '') if config is not None else ''
+        return cls(parse_cookie_header(cookie))
+
+    def process_request(self, request, spider=None):
+        if not self.cookies:
+            return None
+        request.cookies.update(self.cookies)
+        return None

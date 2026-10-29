@@ -52,8 +52,13 @@ AUTOTHROTTLE_DEBUG = False
 # 研招网的接口请求太密时返回 HTTP 200 + {"flag": false, "msg": "访问太频繁"}，
 # Scrapy 自带的重试只看状态码，这种响应不会被重试，会静默丢数据。
 # 下面这个中间件专门认它，退避后重发。
+#
+# LoginCookieMiddleware 的优先级必须小于 700（Scrapy 自带 CookiesMiddleware）：
+# 下载中间件的 process_request 按优先级从小到大跑，
+# 我们要赶在 CookiesMiddleware 之前把登录态塞进 request.cookies。
 DOWNLOADER_MIDDLEWARES = {
     'yzw.middlewares.ThrottleRetryMiddleware': 543,
+    'yzw.middlewares.LoginCookieMiddleware': 690,
 }
 THROTTLE_RETRY_TIMES = 3
 THROTTLE_BACKOFF = 10
@@ -80,6 +85,10 @@ TELNETCONSOLE_ENABLED = False
 
 # 关闭 cookie 中间件？—— 不关，登录态需要它
 COOKIES_ENABLED = True
+
+# 登录态：把 config.yaml / .env 里的 cookie 挂到每个请求上。
+# 见 DOWNLOADER_MIDDLEWARES 里的 LoginCookieMiddleware —— 必须是下载中间件，
+# Scrapy 2.17 起的 spider middleware 已经不支持 process_request 了。
 
 # HTTP 缓存（默认关闭，调试接口时打开很有用）
 #HTTPCACHE_ENABLED = True
