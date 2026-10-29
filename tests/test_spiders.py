@@ -10,6 +10,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from yzw.config import build_config  # noqa: E402
+from yzw.discovery import SchoolCatalog  # noqa: E402
 from yzw.spiders.base import BaseSpider  # noqa: E402
 
 
@@ -31,6 +32,8 @@ class DummySpider(BaseSpider):
         super().__init__()
         self.config = build_config(config)
         self.captured = []
+        # 测试不依赖磁盘上的 data/schools.json，需要院校清单的用例自己塞
+        self.catalog_index = SchoolCatalog()
 
     def school_requests(self, unit):
         self.captured.append(unit)
@@ -101,14 +104,28 @@ def test_all_schools_starts_from_first_province():
     assert 'start=0' in requests[0].url
 
 
-def test_named_school_uses_resolve_request():
-    """指定院校走 dws.do 精确查"""
+def test_named_school_is_resolved_to_code():
+    """校名先从院校清单里换成招生单位代码再查
+
+    dws.do 的 dwmc 是子串匹配，"大学"能匹配 485 所却只返回 10 条，
+    直接拿校名查并不可靠 —— 院校清单里能查到就换成 dwdm 精确查。
+    """
     spider = DummySpider(schools=['南京大学'])
+    spider.catalog_index.add({'dwdm': '10284', 'dwmc': '南京大学', 'szssm': '32'})
     requests = list(spider.begin_school_phase())
     assert len(requests) == 1
     assert requests[0].url.endswith('/zsml/rs/dws.do')
     assert requests[0].method == 'POST'
-    assert b'dwmc=%E5%8D%97%E4%BA%AC%E5%A4%A7%E5%AD%A6' in requests[0].body
+    assert b'dwdm=10284' in requests[0].body
+    assert b'dwmc=&' in requests[0].body
+
+
+def test_unknown_school_name_falls_back_to_name_query():
+    """院校清单里没有的校名，退回按 dwmc 查"""
+    spider = DummySpider(schools=['某某野鸡大学'])
+    requests = list(spider.begin_school_phase())
+    assert b'dwmc=%E6%9F%90%E6%9F%90%E9%87%8E%E9%B8%A1%E5%A4%A7%E5%AD%A6' in requests[0].body
+    assert b'dwdm=&' in requests[0].body
 
 
 def test_school_code_is_sent_as_dwdm():
@@ -117,6 +134,65 @@ def test_school_code_is_sent_as_dwdm():
     requests = list(spider.begin_school_phase())
     assert b'dwdm=10284' in requests[0].body
     assert b'dwmc=' in requests[0].body
+
+
+def test_ambiguous_name_is_not_silently_guessed():
+    """校名匹配到多所时报错，不瞎猜第一条
+
+    dws.do 用子串匹配，"交通大学"会命中 8 所（没有一所叫"交通大学"），
+    猜第一条就等于抓错学校。
+    """
+    spider = DummySpider(schools=['交通大学'])
+    payload = json.dumps({'flag': True, 'msg': {
+        'totalCount': 8,
+        'list': [{'dwdm': '10004', 'dwmc': '北京交通大学'},
+                 {'dwdm': '10150', 'dwmc': '大连交通大学'}]}})
+    response = FakeResponse(payload, {'school': '交通大学', 'by_code': False})
+
+    assert list(spider.parse_resolved_school(response)) == []
+    assert spider.captured == []
+    assert spider._crawled_schools == 0
+
+
+def test_exact_match_among_many_is_still_skipped():
+    """即使候选里有一所同名，匹配到多所也不抓
+
+    接口返回的是子串匹配的结果集，"同名"的那一所在不在结果集里都不算数。
+    """
+    spider = DummySpider(schools=['某某大学'])
+    payload = json.dumps({'flag': True, 'msg': {
+        'totalCount': 3,
+        'list': [{'dwdm': '10001', 'dwmc': '某某大学'},
+                 {'dwdm': '10002', 'dwmc': '某某大学(北京)'}]}})
+    response = FakeResponse(payload, {'school': '某某大学', 'by_code': False})
+
+    assert list(spider.parse_resolved_school(response)) == []
+    assert spider.captured == []
+
+
+def test_unique_exact_match_is_crawled():
+    """全站就这一所、校名一模一样 —— 抓"""
+    spider = DummySpider(schools=['某某大学'])
+    payload = json.dumps({'flag': True, 'msg': {
+        'totalCount': 1,
+        'list': [{'dwdm': '90001', 'dwmc': '某某大学', 'szssm': '32'}]}})
+    response = FakeResponse(payload, {'school': '某某大学', 'by_code': False})
+
+    list(spider.parse_resolved_school(response))
+    assert [unit['dwdm'] for unit in spider.captured] == ['90001']
+    assert spider._crawled_schools == 1
+
+
+def test_unique_but_different_name_is_skipped():
+    """只匹配到一所但校名不一样 —— 也不抓（那不是你要的学校）"""
+    spider = DummySpider(schools=['某某大学'])
+    payload = json.dumps({'flag': True, 'msg': {
+        'totalCount': 1,
+        'list': [{'dwdm': '90001', 'dwmc': '某某大学(北京)', 'szssm': '32'}]}})
+    response = FakeResponse(payload, {'school': '某某大学', 'by_code': False})
+
+    assert list(spider.parse_resolved_school(response)) == []
+    assert spider.captured == []
 
 
 # ----------------------------------------------------------------------
@@ -151,8 +227,9 @@ def test_extra_school_already_crawled_is_skipped():
     # 再把南京大学当作 extra 精确查一次 —— 不应该重复抓
     spider.catalog.add({'dwdm': '10284', 'dwmc': '南京大学', 'szssm': '32'})
     payload = json.dumps({'flag': True, 'msg': {
+        'totalCount': 1,
         'list': [{'dwdm': '10284', 'dwmc': '南京大学', 'szssm': '32'}]}})
-    extra = FakeResponse(payload, {'school': '南京大学'})
+    extra = FakeResponse(payload, {'school': '南京大学', 'by_code': False})
     assert list(spider.parse_resolved_school(extra)) == []
     assert [unit['dwmc'] for unit in spider.captured] == ['南京大学']
 

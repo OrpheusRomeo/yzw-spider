@@ -102,7 +102,9 @@ class BaseSpider(scrapy.Spider):
 
         # 运行时状态
         self.codes = CodeTable()          # 门类 / 一级学科代码表
-        self.catalog = SchoolCatalog()    # 招生单位清单
+        self.catalog = SchoolCatalog()    # 本次枚举到的招生单位
+        # 已有的全国院校清单，用来把校名解析成招生单位代码
+        self.catalog_index = SchoolCatalog.load(CATALOG_PATH)
         self.major_filters = []           # [(粒度, 代码), ...]
         self._table_resolved = set()      # 在门类表/一级学科表里查到过的专业名
         self._pending_yjxk = 0
@@ -355,40 +357,77 @@ class BaseSpider(scrapy.Spider):
                 yield self.resolve_school_request(name)
 
     def resolve_school_request(self, name):
-        """按院校名称或院校代码精确查招生单位"""
+        """按院校名称或院校代码精确查招生单位
+
+        校名优先从院校清单（data/schools.json）里换成招生单位代码：
+        dws.do 的 dwmc 是子串匹配，命中太多时精确匹配可能落在返回的前 10 条之外
+        （实测 dwmc=大学 能匹配 485 所，但只返回 10 条），直接用校名查并不可靠。
+        清单里没有的校名才退回按名字查，且只认"唯一一所且完全同名"的结果。
+        """
         form = {
             'dwmc': '', 'dwdm': '', 'ssdm': '', 'xxfs': '', 'tydxs': '',
             'jsggjh': '', 'jsxbjh': '', 'dwlxs': '',
             'start': 0, 'curPage': 1, 'pageSize': 10,
         }
-        if str(name).isdigit():
-            form['dwdm'] = str(name)
+
+        text = str(name).strip()
+        dwdm = ''
+        if text.isdigit():
+            dwdm = text
         else:
-            form['dwmc'] = str(name)
+            # 校名先从院校清单里换成招生单位代码
+            known = self.catalog_index.find_by_name(text)
+            if known:
+                dwdm = known['dwdm']
+
+        if dwdm:
+            form['dwdm'] = dwdm
+        else:
+            form['dwmc'] = text
+
         return self.form_request(self.API_DWS, form, self.parse_resolved_school,
-                                 school=str(name))
+                                 school=text, by_code=bool(dwdm))
 
     def parse_resolved_school(self, response):
-        """解析招生单位查询结果"""
+        """解析招生单位查询结果
+
+        按代码查的（从院校清单换来的 dwdm）结果唯一，直接用。
+        按名字查的必须是**唯一且完全同名**的一所才抓 —— dws.do 走子串匹配，
+        "交通大学"会匹配 8 所、"大学"匹配 485 所，命中多于一所就不抓。
+        """
         msg = self.parse_json(response)
         name = response.meta['school']
         units = msg.get('list') or []
+        total = msg.get('totalCount') or 0
 
-        unit = None
-        if str(name).isdigit():
+        if response.meta.get('by_code'):
+            # 按代码查的，返回的就是它
             unit = units[0] if units else None
+            if not unit:
+                self.logger.error('院校 "%s" 没查到，跳过', name)
         else:
-            for candidate in units:
-                if candidate.get('dwmc') == name:
-                    unit = candidate
-                    break
-            if unit is None and units:
-                self.logger.warning('院校 "%s" 没有精确匹配，按第一条 "%s" 处理',
-                                    name, units[0].get('dwmc'))
-                unit = units[0]
+            # 按名字查的：只认"全站就这一所、且校名一模一样"的结果
+            exact = [u for u in units if (u.get('dwmc') or '').strip() == name]
+            unit = exact[0] if (total == 1 and len(exact) == 1) else None
+            if unit is None:
+                candidates = '、'.join(u.get('dwmc') or '' for u in units[:5])
+                if total > 1:
+                    self.logger.error(
+                        '院校 "%s" 匹配到 %d 所，不是唯一一所，已跳过。'
+                        '（校名是子串匹配，"交通大学"能匹配 8 所）'
+                        '请写全称或改用招生单位代码。候选：%s',
+                        name, total, candidates)
+                elif total == 1:
+                    self.logger.error(
+                        '院校 "%s" 没有精确匹配（唯一候选是 %s），已跳过。'
+                        '请写全称或改用招生单位代码。',
+                        name, candidates)
+                else:
+                    self.logger.error(
+                        '院校 "%s" 没查到，已跳过。'
+                        '请写全称或改用招生单位代码。', name)
 
         if not unit:
-            self.logger.error('院校 "%s" 没查到', name)
             return
 
         self.catalog.add(unit)
