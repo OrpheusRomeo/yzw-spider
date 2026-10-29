@@ -22,7 +22,13 @@ logger = logging.getLogger(__name__)
 # 各文件统一的表头 / 列顺序
 HEAD = [
     'Link', 'Subject1', 'Subject2', 'Subject3', 'Subject4',
-    'University', 'ExamType', 'College', 'Major', 'StudyType',
+    'Province', 'ProvinceCode',
+    'University', 'SchoolCode',
+    'College',
+    'Major', 'MajorCode',
+    'MajorSub', 'MajorSubCode',
+    'MajorCategory', 'MajorCategoryCode',
+    'ExamType', 'StudyType',
     'ResearchInterests', 'Teacher', 'StudentNo', 'Content',
 ]
 

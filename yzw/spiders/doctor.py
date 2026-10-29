@@ -48,6 +48,8 @@ class DoctorSpider(BaseSpider):
             url=f"{self.API_YXS_AND_ZY}?{urlencode(params)}",
             callback=self.parse_yxs_list,
             meta={'dwdm': dwdm, 'dwmc': unit.get('dwmc'),
+                  'szss': unit.get('szss') or '',
+                  'szssm': unit.get('szssm') or '',
                   'start': 0, 'cur_page': 1})
 
     def parse_yxs_list(self, response):
@@ -77,7 +79,10 @@ class DoctorSpider(BaseSpider):
             yield scrapy.Request(
                 url=f"{self.API_CX_ZYML}?{urlencode(params)}",
                 callback=self.parse_detail,
-                meta={'dwdm': dwdm, 'dwmc': dwmc, 'row': row},
+                meta={'dwdm': dwdm, 'dwmc': dwmc,
+                      'szss': response.meta.get('szss') or '',
+                      'szssm': response.meta.get('szssm') or '',
+                      'row': row},
             )
 
         # 学院/专业列表翻页（start 步进 20，实测可以自由翻）
@@ -92,7 +97,10 @@ class DoctorSpider(BaseSpider):
             yield scrapy.Request(
                 url=f"{self.API_YXS_AND_ZY}?{urlencode(params)}",
                 callback=self.parse_yxs_list,
-                meta={'dwdm': dwdm, 'dwmc': dwmc, 'start': start, 'cur_page': next_page},
+                meta={'dwdm': dwdm, 'dwmc': dwmc,
+                      'szss': response.meta.get('szss') or '',
+                      'szssm': response.meta.get('szssm') or '',
+                      'start': start, 'cur_page': next_page},
             )
 
     def parse_detail(self, response):
@@ -108,9 +116,19 @@ class DoctorSpider(BaseSpider):
         for detail in rows:
             item = DoctorItem()
 
+            # 层次信息：博士接口不返回省份和专业层级，
+            # 省份从招生单位记录带过来，层级字段接口没有就留空
+            item['Province'] = response.meta.get('szss') or ''
+            item['ProvinceCode'] = response.meta.get('szssm') or ''
             item['University'] = dwmc
+            item['SchoolCode'] = dwdm
             item['College'] = row.get('yxsmc') or ''
             item['Major'] = row.get('zymc') or ''
+            item['MajorCode'] = row.get('zydm') or ''
+            item['MajorSub'] = ''
+            item['MajorSubCode'] = ''
+            item['MajorCategory'] = ''
+            item['MajorCategoryCode'] = ''
             item['ResearchInterests'] = detail.get('yjfxmc') or ''
             item['Teacher'] = detail.get('dsxm') or ''
             item['StudentNo'] = self.format_student_no(detail)

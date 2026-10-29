@@ -10,7 +10,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from yzw.codes import (LEVEL_ML, LEVEL_YJXK, LEVEL_ZY, CodeTable,  # noqa: E402
                         match_major, parse_autozy, parse_code_list)
-from yzw.discovery import SchoolCatalog, merge_catalog, parse_school_list  # noqa: E402
+from yzw.discovery import (SchoolCatalog, base_name, merge_catalog,  # noqa: E402
+                           parse_school_list)
 
 ML_JSON = '{"rad":"","dms":[{"mc":"哲学","dm":"01"},{"mc":"经济学","dm":"02"}]}'
 YJXK_JSON = ('{"dms":[{"mc":"理论经济学","dm":"0201"},'
@@ -123,6 +124,46 @@ def test_catalog_province_counts_and_lookup():
     ])
     assert catalog.province_counts() == {'32': 1, '12': 1}
     assert [u['dwmc'] for u in catalog.schools_of('32')] == ['南京大学']
+
+
+# ----------------------------------------------------------------------
+# 多校区：去掉括号后本体名相同 = 同一所大学
+# ----------------------------------------------------------------------
+def test_base_name_strips_campus_suffix():
+    assert base_name('中国石油大学(华东)') == '中国石油大学'
+    assert base_name('中国石油大学（华东）') == '中国石油大学'
+    assert base_name('中国石油大学') == '中国石油大学'
+    assert base_name('上海交通大学') == '上海交通大学'
+    # 用顿号把几个研究所连在一起的校名，取第一个再剥括号
+    assert base_name('中国兵器科学研究院(西安近代化学研究所)、中国兵器科学研究院(内蒙古金属材料研究所)') \
+        == '中国兵器科学研究院'
+    assert base_name('') == ''
+
+
+def test_catalog_finds_all_campuses_of_one_university():
+    catalog = SchoolCatalog([
+        {'dwdm': '10425', 'dwmc': '中国石油大学(华东)', 'szssm': '32'},
+        {'dwdm': '11414', 'dwmc': '中国石油大学(北京)', 'szssm': '11'},
+        {'dwdm': '10004', 'dwmc': '北京交通大学', 'szssm': '11'},
+        {'dwdm': '10248', 'dwmc': '上海交通大学', 'szssm': '31'},
+    ])
+    camps = catalog.find_by_base_name('中国石油大学')
+    assert [u['dwdm'] for u in camps] == ['10425', '11414']
+    # 带括号写也一样能找到同一组
+    assert [u['dwdm'] for u in catalog.find_by_base_name('中国石油大学(华东)')] \
+        == ['10425', '11414']
+
+
+def test_catalog_does_not_confuse_different_universities():
+    """本体名对不上就不是多校区 —— "交通大学"匹配不到任何一所"""
+    catalog = SchoolCatalog([
+        {'dwdm': '10004', 'dwmc': '北京交通大学', 'szssm': '11'},
+        {'dwdm': '10248', 'dwmc': '上海交通大学', 'szssm': '31'},
+        {'dwdm': '10404', 'dwmc': '华东交通大学', 'szssm': '36'},
+    ])
+    assert catalog.find_by_base_name('交通大学') == []
+    assert catalog.find_by_base_name('大学') == []
+    assert len(catalog.find_by_base_name('北京交通大学')) == 1
 
 
 def test_catalog_save_and_load(tmp_path):

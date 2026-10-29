@@ -52,7 +52,8 @@ class MasterSpider(BaseSpider):
             }
             yield self.form_request(
                 self.API_DWZYS, form, self.parse_major_list,
-                dwdm=dwdm, dwmc=dwmc, ml=ml, yjxkdm=yjxk, zydm=zy, form=form)
+                dwdm=dwdm, dwmc=dwmc, ml=ml, yjxkdm=yjxk, zydm=zy, form=form,
+                szss=unit.get('szss') or '', szssm=unit.get('szssm') or '')
 
     def parse_major_list(self, response):
         """解析专业列表，对每个专业请求学院/研究方向明细"""
@@ -91,7 +92,9 @@ class MasterSpider(BaseSpider):
                         yield self.form_request(
                             self.API_DWZYS, form, self.parse_major_list,
                             dwdm=dwdm, dwmc=dwmc, ml=ml, yjxkdm=child, zydm='',
-                            form=form)
+                            form=form,
+                            szss=response.meta.get('szss') or '',
+                            szssm=response.meta.get('szssm') or '')
                 else:
                     self.logger.warning('%s 的 %s 门类有 %d 个专业，超过 10 条且没有一级学科可拆',
                                         dwmc, ml, total)
@@ -104,9 +107,11 @@ class MasterSpider(BaseSpider):
                 continue
             if not self.mark_major_seen(dwdm, zydm):
                 continue
-            yield from self.detail_requests(dwdm, dwmc, major)
+            yield from self.detail_requests(
+                dwdm, dwmc, major,
+                response.meta.get('szss') or '', response.meta.get('szssm') or '')
 
-    def detail_requests(self, dwdm, dwmc, major):
+    def detail_requests(self, dwdm, dwmc, major, szss='', szssm=''):
         """某个专业 -> 学院 / 研究方向明细"""
         form = {
             'zydm': major.get('zydm') or '', 'zymc': major.get('zymc') or '',
@@ -116,7 +121,8 @@ class MasterSpider(BaseSpider):
         }
         yield self.form_request(
             self.API_YJFXS, form, self.parse_detail,
-            dwdm=dwdm, dwmc=dwmc, major=major, form=form, split='')
+            dwdm=dwdm, dwmc=dwmc, major=major, form=form, split='',
+            szss=szss, szssm=szssm)
 
     def parse_detail(self, response):
         """解析学院/研究方向明细，产出 MasterItem"""
@@ -140,7 +146,9 @@ class MasterSpider(BaseSpider):
                     yield self.form_request(
                         self.API_YJFXS, form, self.parse_detail,
                         dwdm=response.meta['dwdm'], dwmc=response.meta['dwmc'],
-                        major=response.meta['major'], form=form, split=split)
+                        major=response.meta['major'], form=form, split=split,
+                        szss=response.meta.get('szss') or '',
+                        szssm=response.meta.get('szssm') or '')
             elif response.meta.get('split') != 'paged':
                 # 拆到底了还是超 10 条：研招网匿名接口本身也只给 10 条，
                 # 这部分数据拿不到，明确记下来，不静默丢
@@ -162,9 +170,18 @@ class MasterSpider(BaseSpider):
 
             item = MasterItem()
 
+            # 层次信息：明细行自带省份、院校代码、完整专业代码层级
+            item['Province'] = row.get('szss') or response.meta.get('szss') or ''
+            item['ProvinceCode'] = row.get('szssm') or response.meta.get('szssm') or ''
             item['University'] = dwmc
+            item['SchoolCode'] = dwdm or row.get('dwdm') or ''
             item['College'] = row.get('yxsmc') or ''
             item['Major'] = row.get('zymc') or major.get('zymc') or ''
+            item['MajorCode'] = row.get('zydm') or major.get('zydm') or ''
+            item['MajorSub'] = row.get('yjxkmc') or major.get('yjxkmc') or ''
+            item['MajorSubCode'] = row.get('yjxkdm') or major.get('yjxkdm') or ''
+            item['MajorCategory'] = row.get('mlmc') or major.get('mlmc') or ''
+            item['MajorCategoryCode'] = row.get('mldm') or major.get('mldm') or ''
             item['ResearchInterests'] = row.get('yjfxmc') or ''
             item['Teacher'] = row.get('zdjs') or ''
             item['StudentNo'] = row.get('nzsrsstr') or str(row.get('nzsrs') or '')

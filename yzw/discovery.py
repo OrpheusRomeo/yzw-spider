@@ -49,6 +49,24 @@ _CODE_RE = re.compile(r'common/xh/(\w+)\.jpg')
 _NAME_RE = re.compile(r'schoolInfo--schId-(\d+)\.dhtml"[^>]*>\s*([^<]+?)\s*<')
 _AREA_RE = re.compile(r'iconfont">&#xe6a4;</i>\s*([^<]+?)\s*<')
 
+# 校名里的括号后缀表示校区 / 研究所：
+#   中国石油大学(华东)、中国地质大学(武汉)、中国航空研究院(601所)
+# 归一化时去掉它，只留学校本体名 —— 用于把同一所大学的多个校区归成一组。
+_PAREN_RE = re.compile(r'[（(][^（()）]*[)）]')
+
+
+def base_name(name):
+    """去掉校名里的括号后缀和顿号分隔，只留学校本体名
+
+    中国石油大学(华东)                          -> 中国石油大学
+    中国地质大学(武汉)                          -> 中国地质大学
+    中国兵器科学研究院(西安近代化学研究所)、…      -> 中国兵器科学研究院
+    上海交通大学                                  -> 上海交通大学
+    """
+    first = re.split(r'[、,，]', str(name or ''))[0]
+    return _PAREN_RE.sub('', first).strip()
+
+
 
 def parse_school_list(html, ssdm=''):
     """从院校库列表页里解析出招生单位
@@ -106,6 +124,19 @@ class SchoolCatalog(object):
             if unit.get('dwmc') == name:
                 return unit
         return None
+
+    def find_by_base_name(self, name):
+        """按学校本体名查找，返回同一所大学的所有校区
+
+        "中国石油大学" -> [中国石油大学(华东), 中国石油大学(北京)]
+        "交通大学"     -> []（上海交通大学、华东交通大学是四所不同的学校，
+                                本体名对不上，不会被当成多校区）
+        """
+        key = base_name(name)
+        if not key:
+            return []
+        return [unit for unit in self.all()
+                if base_name(unit.get('dwmc') or '') == key]
 
     def find_by_code(self, code):
         return self.schools.get(str(code))
