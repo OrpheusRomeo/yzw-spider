@@ -1,6 +1,6 @@
 # yzw-spider · 研究生招生目录爬虫
 
-[![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Scrapy](https://img.shields.io/badge/scrapy-2.13--2.17-green.svg)](https://scrapy.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -42,6 +42,7 @@
 - **多格式导出**：同一份数据同时写出 CSV、JSON、Excel 三种格式，文件名带运行时间戳。
 - **Excel 分校分表**：按学校名自动建 sheet，列顺序与表头严格对齐；学校太多时自动放弃 Excel，只留 CSV / JSON。
 - **限流自动退避**：接口返回"访问太频繁"时自动等待重试，不会静默丢数据。
+- **不静默失败**：目标为空、学位层次对不上、校名/专业名对不上、明细超出接口上限 —— 都在日志里明确报出来。
 
 ---
 
@@ -83,6 +84,9 @@ pip install -r requirements.txt
 pip install -r requirements.txt
 ```
 
+> 如果机器上已经有装了 Scrapy 的 conda 环境，直接用那个也行，不必新建。
+> 判断依据：`python -c "import scrapy; print(scrapy.__version__)"` 能打印出版本号就说明可用。
+
 ---
 
 ## 快速开始
@@ -106,15 +110,18 @@ scrapy crawl all
 ### 常用参数
 
 ```bash
-scrapy crawl master -a config=other.yaml     # 用另一份配置文件
-scrapy crawl all    -a degree=both           # 命令行临时改学位层次
-scrapy crawl master -a schools=all           # 命令行临时抓全国
-scrapy crawl master -a schools=南京大学,南开大学  # 逗号分隔
-scrapy crawl master -s LOG_LEVEL=INFO        # 调整日志级别
+scrapy crawl master -a config=other.yaml           # 用另一份配置文件
+scrapy crawl all    -a degree=both                 # 命令行临时改学位层次
+scrapy crawl master -a schools=all                 # 命令行临时抓全国
+scrapy crawl master -a schools=南京大学,南开大学     # 逗号分隔多个
+scrapy crawl master -a majors=应用经济学,金融学      # 专业同理
+scrapy crawl master -s LOG_LEVEL=INFO              # 调整日志级别
 ```
 
 > 命令行参数只覆盖 `config` / `degree` / `schools` / `majors` / `cookie` 这几项，
 > 限速、输出目录等还是在 `config.yaml` 里改。
+>
+> 命令行只能传字符串，所以多个值用**逗号分隔**（中英文逗号都认）。
 >
 > `degree` 是有约束的：`scrapy crawl master` 只抓硕士，配置里写了 `degree: doctor`
 > 的话它会直接跳过并提示，`scrapy crawl all` 才会按配置同时抓两个学位层次。
@@ -166,6 +173,15 @@ schools:                        # ③ 几个学校
 
 - 校名和招生单位代码可以混用：`schools: [南京大学, 10284]`。
   代码就是研招网的招生单位代码（`10284` = 南京大学），院校库枚举出来的也是它。
+- **校名会先在院校清单（`data/schools.json`）里换成招生单位代码再查**，
+  因为 `dws.do` 的 `dwmc` 是**子串匹配**：`交通大学` 能命中 8 所（没有一所真叫"交通大学"），
+  `大学` 更是能匹配 485 所却只返回 10 条。换成 `dwdm` 就是精确查，一所不差。
+  清单里查不到的校名才退回按名字查，这时**只认"全站唯一一所、且校名一模一样"的结果**，
+  匹配到多于一所就直接跳过：
+  ```
+  ERROR: 院校 "交通大学" 匹配到 8 所，不是唯一一所，已跳过。（校名是子串匹配，"交通大学"能匹配 8 所）请写全称或改用招生单位代码。候选：北京交通大学、大连交通大学、上海交通大学、华东交通大学、西南交通大学
+  ```
+  爬虫不会替你猜第一条 —— 抓错学校比不抓更糟。
 - **命令行覆盖只能传字符串**，这时用逗号分隔（`schools` / `majors` / `extra_schools` 都一样）：
   ```bash
   scrapy crawl master -a schools=南京大学,南开大学
@@ -272,6 +288,12 @@ https://yz.chsi.com.cn/sch/search.do?ssdm=32&start=20
 python scripts/build_school_catalog.py
 ```
 
+枚举是**逐省推进**的：一个省翻完再排下一个省。所以 `request.max_schools` 到量就能停下来，
+不会把 31 个省的白名单全跑一遍。
+
+`extra_schools` 在全量模式下同样生效 —— 省份枚举全部跑完后会再补一次，
+用来兜底"院校库里没收录、枚举漏掉"的院校；已经被枚举抓到过的不会重复抓。
+
 ### 规模与耗时
 
 | 项目 | 硕士全量 | 博士全量 |
@@ -324,8 +346,9 @@ yzw-spider/
 ├── scripts/
 │   └── build_school_catalog.py # 单独重建 data/schools.json
 ├── tests/                      # pytest 用例
-│   ├── test_config.py
-│   └── test_codes.py
+│   ├── test_config.py          # 配置层的解析、归一化、校验
+│   ├── test_codes.py           # 学科代码表与院校清单
+│   └── test_spiders.py         # 爬虫调度：枚举分支、去重
 └── yzw/
     ├── config.py               # 配置加载、归一化、校验
     ├── codes.py                # 门类 / 一级学科 / 专业代码表
@@ -439,7 +462,7 @@ result/doctor/doctor_directory_202610281704.xlsx
 | 步骤 | 接口 | 方法 | 作用 |
 | --- | --- | --- | --- |
 | 0 | `/sch/search.do` | GET | **院校库**：按省份翻页，拿到全国招生单位及 `dwdm` |
-| 1 | `/zsml/rs/dws.do` | POST | 按校名 / 校码精确查招生单位（`schools` 指定具体学校时用） |
+| 1 | `/zsml/rs/dws.do` | POST | 查招生单位（`schools` 指定具体学校时用；校名先换成 `dwdm` 再精确查） |
 | 2 | `/zsml/rs/dwzys.do` | POST | 某招生单位的开设专业列表（按 `mldm` + `yjxkdm` 收窄） |
 | 3 | `/zsml/rs/yjfxs.do` | POST | 某专业的学院 / 研究方向明细，含科目、导师、拟招人数 |
 | — | `/zsml/code/ml.json` | GET | 学科门类代码表（14 个） |
@@ -464,7 +487,7 @@ result/doctor/doctor_directory_202610281704.xlsx
 
 | 接口 | 约束 | 绕行办法 |
 | --- | --- | --- |
-| `dws.do` | 每页硬顶 10 条；`start > 0` 一律"请登录"；`pageSize` 被忽略 | **不用它枚举院校**，改用院校库 `/sch/search.do`（可自由翻页）；只用来按校名精确查一次 |
+| `dws.do` | 每页硬顶 10 条；`start > 0` 一律"请登录"；`pageSize` 被忽略；**`dwmc` 是子串匹配**（`大学` 匹配 485 所却只给 10 条） | **不用它枚举院校**，改用院校库 `/sch/search.do`（可自由翻页）；只用来查一次：校名先在院校清单里换成 `dwdm` 精确查；退回按名字查时只认"唯一一所且完全同名"，多于一所就跳过 |
 | `dwzys.do` | 每页硬顶 10 条；`start > 0` 一律"请登录" | 用 `mldm`（14 门类）→ `yjxkdm`（176 个一级学科）两级收窄，每组 ≤ 10 条，**彻底避开登录墙** |
 | `yjfxs.do` | 每页硬顶 10 条；`start > 0` 一律"请登录"；**只认 `tydxs` 一个筛选条件**（`xxfs` / `jsggjh` / `jsxbjh` 传进去报"参数错误"） | 按 `tydxs=0` / `tydxs=1` 拆成两支重取（多数专业 7 + 5 = 12 正好拿全） |
 | `listYxsAndZyCollected` | `dwdm` 必填；`start` 步进 20 **可自由翻页**，无登录墙 | 直接翻页 |
@@ -478,6 +501,20 @@ result/doctor/doctor_directory_202610281704.xlsx
 ---
 
 ## 常见问题
+
+**Q：报错"配置里没有指定任何院校，没有可抓的目标"**
+`schools` 写空了或者漏写了。填成列表即可：
+
+```yaml
+schools:
+  - 南京大学
+```
+
+要抓全国就写 `- all`。爬虫在这种情况下**一个请求都不会发**，直接报错退出。
+
+**Q：`scrapy crawl master` 提示"配置里的 degree 是 doctor，本 spider 只抓 master"**
+`master` 这个入口只负责硕士。要抓博士用 `scrapy crawl doctor`，
+两个都要就 `scrapy crawl all`。
 
 **Q：抓不到数据 / 所有请求都是 404**
 研招网改过版。跑一次 `scrapy crawl master -s LOG_LEVEL=DEBUG`，看实际请求的接口返回了什么；
@@ -495,6 +532,15 @@ result/doctor/doctor_directory_202610281704.xlsx
 **Q：日志里出现"专业 XXX 的明细有 N 条，接口只返回 10 条"**
 见[已知问题](#已知问题)第 3 条 —— 这是研招网接口自身的限制，不是爬虫的 bug。
 
+**Q：日志里出现"专业 XXX 在研招网代码表里没有精确匹配"**
+专业名写得太简略了。研招网的自动补全接口是模糊匹配，写 `经济` 会返回几十个沾边的专业，
+爬虫只认名称完全对得上的，所以会跳过并提示。写全称（如 `应用经济学`）或直接写代码（`0202`）。
+
+**Q：报错"院校 XXX 匹配到 N 所，不是唯一一所，已跳过"**
+校名写短了。研招网按校名查是**子串匹配**，`交通大学` 会命中 8 所带"交通大学"的院校，
+爬虫不敢替你猜（抓错学校比不抓更糟），所以报错并列出候选。
+写全称（`北京交通大学`）或者直接写招生单位代码（`10004`）即可。
+
 **Q：`ValueError: Missing scheme in request url: h`**
 Scrapy 版本过老（< 2.13 不认识 `async def start()`）或代码被改乱。装成 `pip install -r requirements.txt` 的版本即可。
 
@@ -504,6 +550,10 @@ Scrapy 版本过老（< 2.13 不认识 `async def start()`）或代码被改乱�
 **Q：想先小范围试跑**
 在 `config.yaml` 里加一行 `request.max_schools: 3`，只抓前 3 所学校。
 枚举会跟着停，不会白跑一遍全国。
+
+**Q：跑完发现 result/doctor/ 是空的**
+只跑 `master` 时博士目录不会产生文件 —— 文件是第一条数据落盘时才建的，
+两个 pipeline 各自只处理自己那类 Item。
 
 **Q：导师字段是空的**
 硕士目录的 `zdjs` 字段大部分院校不上报，属正常现象；博士目录的 `dsxm` 一般有值。
@@ -573,6 +623,18 @@ WARNING: 专业 应用经济学(020200) 的明细有 12 条，接口只返回 10
 ### 9. 拟招人数格式不统一
 
 硕士是研招网的文本（如 `专业：3(不含推免)`），博士是纯数字，跨表对比时需要留意。
+
+### 10. 按校名查招生单位是子串匹配
+
+`dws.do` 的 `dwmc` 走的是**子串匹配**：查 `交通大学` 返回 8 所带"交通大学"的院校，
+查 `大学` 的 `totalCount` 是 485 但每页只给 10 条 —— 精确匹配的那一条很可能压根没出现在结果里。
+
+爬虫的做法是：校名先在院校清单 `data/schools.json` 里换成 `dwdm` 精确查（一所不差）；
+清单里没有的才退回按名字查，且只认**全站唯一一所、且校名完全一致**的结果，
+匹配到多于一所就报错跳过（见「目标学校怎么写」）。
+
+> 院校清单来自研招网院校库，覆盖 936 所招生单位。
+> 清单外的院校会走"按名字查 + 必须唯一且同名"这条严格的路。
 
 ---
 
