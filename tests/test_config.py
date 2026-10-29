@@ -197,3 +197,64 @@ def test_resolve_config_path_prefers_argument(tmp_path, monkeypatch):
     monkeypatch.setenv('YZW_CONFIG', str(tmp_path / 'env.yaml'))
     assert resolve_config_path(str(tmp_path / 'arg.yaml')).endswith('arg.yaml')
     assert resolve_config_path(None).endswith('env.yaml')
+
+
+# ----------------------------------------------------------------------
+# 命令行覆盖：-a 传进来的参数怎么落到配置上
+# ----------------------------------------------------------------------
+def test_override_supports_dotted_paths():
+    """-a output.directory=xxx 这种点号路径要真的生效"""
+    config = build_config({'output': {'directory': './result'}})
+    updated = config.override({
+        'output.directory': '/app/result',
+        'output.excel': 'never',
+        'output.excel_max_schools': '20',
+        'request.delay': '0.5',
+        'request.concurrency': '4',
+        'request.max_schools': '3',
+    })
+    assert updated.output_directory() == '/app/result'
+    assert updated.excel_mode() == 'never'
+    assert updated.excel_max_schools() == 20
+    assert updated.delay() == 0.5
+    assert updated.concurrency() == 4
+    assert updated.max_schools() == 3
+
+
+def test_override_does_not_mutate_the_original():
+    """覆盖出来的应该是新对象，原配置不受影响"""
+    config = build_config({'output': {'directory': './result'}})
+    updated = config.override({'output.directory': '/tmp/out'})
+    assert updated.output_directory() == '/tmp/out'
+    assert config.output_directory() == './result'
+
+
+def test_override_rejects_unknown_key():
+    """写错的参数名要报错，不能静默忽略"""
+    config = build_config({})
+    with pytest.raises(ConfigError) as error:
+        config.override({'output.dir': '/tmp/out'})
+    assert 'output.dir' in str(error.value)
+    assert 'output.directory' in str(error.value)
+
+
+def test_override_rejects_unknown_top_level_key():
+    config = build_config({})
+    with pytest.raises(ConfigError):
+        config.override({'schoolss': '南京大学'})
+
+
+def test_override_ignores_none_values():
+    config = build_config({'degree': 'master'})
+    assert config.override({'degree': None}).degrees == ['master']
+
+
+def test_env_cookie_overrides_file(monkeypatch, tmp_path):
+    """YZW_COOKIE 环境变量优先于配置文件里的 cookie（Docker 里用它传登录态）"""
+    path = tmp_path / 'cfg.yaml'
+    path.write_text('cookie: "JSESSIONID=from-file"\n', encoding='utf-8')
+    monkeypatch.setenv('YZW_COOKIE', 'JSESSIONID=from-env')
+    assert load_config(str(path)).cookie == 'JSESSIONID=from-env'
+
+    monkeypatch.delenv('YZW_COOKIE')
+    assert load_config(str(path)).cookie == 'JSESSIONID=from-file'

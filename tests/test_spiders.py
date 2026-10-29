@@ -7,6 +7,8 @@ import json
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from yzw.config import build_config  # noqa: E402
@@ -29,11 +31,14 @@ class DummySpider(BaseSpider):
     name = 'dummy'
 
     def __init__(self, **config):
-        super().__init__()
-        self.config = build_config(config)
+        super().__init__(**config)
         self.captured = []
         # 测试不依赖磁盘上的 data/schools.json，需要院校清单的用例自己塞
         self.catalog_index = SchoolCatalog()
+
+    def load_base_config(self, config_path):
+        """测试不读磁盘上的 config.yaml，基准配置用空的"""
+        return build_config({})
 
     def school_requests(self, unit):
         self.captured.append(unit)
@@ -395,3 +400,26 @@ def test_code_query_with_mismatched_response_is_skipped():
 
     assert list(spider.parse_resolved_school(response)) == []
     assert spider.captured == []
+
+
+# ----------------------------------------------------------------------
+# 命令行参数：写错要报错，不能静默忽略
+# ----------------------------------------------------------------------
+def test_unknown_command_line_argument_is_rejected():
+    """-a 传了不认识的参数名，直接报错
+
+    拼错参数名（比如 output.directory 写成 output.dir）如果被静默忽略，
+    结果会写到意料之外的目录里，比报错难查得多。
+    """
+    from scrapy.exceptions import UsageError
+
+    with pytest.raises(UsageError) as error:
+        DummySpider(output_dir='/tmp/out')
+    assert 'output.dir' in str(error.value)
+
+
+def test_known_command_line_arguments_are_applied():
+    """认识的参数名会落到配置上"""
+    spider = DummySpider(**{'output.directory': '/tmp/out', 'request.delay': '0.5'})
+    assert spider.config.output_directory() == '/tmp/out'
+    assert spider.config.delay() == 0.5

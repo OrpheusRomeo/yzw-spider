@@ -15,10 +15,12 @@ import os
 from urllib.parse import quote, urlencode
 
 import scrapy
+from scrapy.exceptions import UsageError
 
 from yzw.codes import (API_AUTOZY, API_ML, API_YJXK, LEVEL_ZY, CodeTable,
                        match_major, parse_autozy)
-from yzw.config import PROJECT_ROOT, load_config
+from yzw.config import (OVERRIDE_KEYS, OVERRIDE_PATHS, PROJECT_ROOT,
+                         load_config)
 from yzw.discovery import (PAGE_SIZE, PROVINCE_NAMES, PROVINCES, SchoolCatalog,
                            base_name, merge_catalog, parse_school_list)
 
@@ -26,23 +28,6 @@ logger = logging.getLogger(__name__)
 
 # 枚举到的招生单位写到这里，方便核对与复用
 CATALOG_PATH = os.path.join(PROJECT_ROOT, 'data', 'schools.json')
-
-# 可以用 -a 在命令行上覆盖的配置项
-OVERRIDE_KEYS = ('config', 'degree', 'schools', 'majors', 'cookie')
-
-
-def parse_cookie_header(text):
-    """把 "JSESSIONID=xxx; other=yyy" 解析成 Scrapy 的 COOKIES 字典"""
-    cookies = {}
-    for part in (text or '').split(';'):
-        if '=' not in part:
-            continue
-        key, value = part.split('=', 1)
-        key = key.strip()
-        if key:
-            cookies[key] = value.strip()
-    return cookies
-
 
 class BaseSpider(scrapy.Spider):
     """研究生招生信息爬虫基类"""
@@ -89,14 +74,21 @@ class BaseSpider(scrapy.Spider):
     # 配置
     # ------------------------------------------------------------------
     def __init__(self, name=None, **kwargs):
+        # -a 传进来的参数要么是认识的配置项，要么直接报错 ——
+        # 拼错参数名（比如 output.directory 写成 output.dir）静默忽略最坑人
         overrides = {}
-        for key in OVERRIDE_KEYS:
-            if key in kwargs:
+        config_path = kwargs.pop('config', None)
+        for key in list(kwargs):
+            if key in OVERRIDE_KEYS or key in OVERRIDE_PATHS:
                 overrides[key] = kwargs.pop(key)
+            else:
+                raise UsageError(
+                    '命令行参数 {} 无法识别。可用参数：config、{}'.format(
+                        key, '、'.join(OVERRIDE_KEYS + OVERRIDE_PATHS)))
 
         super().__init__(name=name, **kwargs)
 
-        self.config = load_config(overrides.pop('config', None))
+        self.config = self.load_base_config(config_path)
         if overrides:
             self.config = self.config.override(overrides)
 
@@ -115,6 +107,10 @@ class BaseSpider(scrapy.Spider):
         self._pending_provinces = []      # 还没枚举的省份（逐省推进，用完即弃）
         self._extras_done = False         # extra_schools 是否已经补过
 
+    def load_base_config(self, config_path):
+        """读配置文件，子类可以换成别的来源（测试里换成空配置）"""
+        return load_config(config_path)
+
     @classmethod
     def from_crawler(cls, crawler, *args, **kwargs):
         spider = cls(*args, **kwargs)
@@ -131,9 +127,8 @@ class BaseSpider(scrapy.Spider):
         settings.set('DOWNLOAD_DELAY', self.config.delay())
         settings.set('CONCURRENT_REQUESTS_PER_DOMAIN', self.config.concurrency())
         settings.set('CONCURRENT_REQUESTS', self.config.concurrency())
-        if self.config.cookie:
-            settings.set('COOKIES', parse_cookie_header(self.config.cookie))
-        # pipeline 要用同一份配置（输出目录、Excel 策略），挂到 settings 上传过去
+        # pipeline 和中间件要用同一份配置（输出目录、Excel 策略、登录态），
+        # 挂到 settings 上传过去
         settings.set('YZW_CONFIG_DATA', self.config)
 
     # ------------------------------------------------------------------

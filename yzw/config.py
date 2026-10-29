@@ -57,6 +57,19 @@ DEFAULTS: Dict[str, Any] = {
     'cookie': '',
 }
 
+# 可以用命令行 -a 覆盖的顶层配置项
+OVERRIDE_KEYS = ('degree', 'schools', 'extra_schools', 'majors', 'cookie')
+
+# 可以用命令行 -a 覆盖的二级配置项，用点号路径写
+OVERRIDE_PATHS = (
+    'output.directory',
+    'output.excel',
+    'output.excel_max_schools',
+    'request.delay',
+    'request.concurrency',
+    'request.max_schools',
+)
+
 
 class ConfigError(Exception):
     """配置不合法"""
@@ -127,7 +140,14 @@ class Config:
         return int(self.request.get('max_schools') or 0)
 
     def override(self, overrides: Dict[str, Any]) -> 'Config':
-        """用 spider 参数覆盖部分配置，返回新对象"""
+        """用 spider 参数覆盖部分配置，返回新对象
+
+        两种写法都支持：
+            -a degree=doctor            顶层配置项直接覆盖
+            -a output.directory=./out    二级配置项用点号路径覆盖
+
+        写错的参数名会直接报错，不会被静默忽略。
+        """
         data = {
             'degree': self.degrees if len(self.degrees) > 1 else self.degrees[0],
             'schools': self.schools,
@@ -140,7 +160,16 @@ class Config:
         for key, value in overrides.items():
             if value is None:
                 continue
-            data[key] = value
+            if key in OVERRIDE_KEYS:
+                data[key] = value
+                continue
+            if key in OVERRIDE_PATHS:
+                group, _, name = key.partition('.')
+                data[group][name] = value
+                continue
+            raise ConfigError(
+                '命令行参数 {} 无法识别。可用参数：{}'.format(
+                    key, '、'.join(OVERRIDE_KEYS + OVERRIDE_PATHS)))
         return build_config(data, self.source_path)
 
 
@@ -318,7 +347,7 @@ def load_config(path: Optional[str] = None) -> Config:
         if path:
             raise ConfigError(f'配置文件不存在：{config_path}')
         # 没有 config.yaml 时用内置默认值，spider 仍可跑
-        return build_config({}, config_path)
+        return _with_env_cookie(build_config({}, config_path))
 
     try:
         with open(config_path, 'r', encoding='utf-8') as file:
@@ -330,4 +359,33 @@ def load_config(path: Optional[str] = None) -> Config:
 
     if data is None:
         data = {}
-    return build_config(data, config_path)
+    return _with_env_cookie(build_config(data, config_path))
+
+
+def _with_env_cookie(config: Config) -> Config:
+    """环境变量 YZW_COOKIE 覆盖配置文件里的登录态
+
+    Docker 里用环境变量传 cookie 更方便 —— 不用把 cookie 写进镜像或配置文件。
+    """
+    env_cookie = os.environ.get('YZW_COOKIE', '').strip()
+    if env_cookie:
+        config.cookie = env_cookie
+    return config
+
+
+def parse_cookie_header(text: str) -> Dict[str, str]:
+    """把 "JSESSIONID=xxx; other=yyy" 解析成 cookie 字典
+
+    Scrapy 没有 COOKIES 这个设置项（只有 COOKIES_ENABLED / COOKIES_DEBUG），
+    设了也不会发出去 —— 登录态必须挂到 request.cookies 上，
+    再由 Scrapy 自带的 CookiesMiddleware 写进 Cookie 请求头。
+    """
+    cookies = {}
+    for part in (text or '').split(';'):
+        if '=' not in part:
+            continue
+        key, value = part.split('=', 1)
+        key = key.strip()
+        if key:
+            cookies[key] = value.strip()
+    return cookies
