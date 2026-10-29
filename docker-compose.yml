@@ -1,4 +1,4 @@
-# 研招网爬虫 —— 一次性任务，跑完就退出
+# 研招网爬虫 —— 一次性任务 + Web 控制台
 #
 #   docker compose build            # 造镜像
 #   docker compose up -d            # 后台开跑
@@ -9,13 +9,19 @@
 #   # 临时跑一次别的组合
 #   docker compose run --rm yzw crawl master -a degree=master -a schools=南京大学
 #
-# 持久化：下面三个挂载都是宿主机目录，容器删了数据还在
+# Web 控制台（web + runner 两个服务）：
+#
+#   docker compose up -d web runner
+#   open http://localhost:8000
+#
+# 持久化：下面几个挂载都是宿主机目录，容器删了数据还在
 #   ./result          抓取结果（CSV / JSONL / Excel）
-#   ./data            院校清单缓存（容器里枚举到的招生单位会写回来）
+#   ./data            院校清单缓存 + 任务目录（配置、日志、状态）
 #   ./config.yaml     目标学校 / 专业 / 学位层次（只读挂载，改完重启容器即可生效）
 #
 # 路径、时区、用户这些都在 .env 里配（模板见 .env.example）。
 services:
+  # ── 一次性任务：抓一次就退出 ─────────────────────────────
   yzw:
     build:
       context: .
@@ -41,3 +47,63 @@ services:
       # 在 .env 里填 YZW_COOKIE 即可，别写进 config.yaml
       YZW_COOKIE: "${YZW_COOKIE:-}"
     command: ["crawl", "${SPIDER:-all}"]
+
+  # ── Web 控制台 ───────────────────────────────────────────
+  #
+  # web    对外的页面 + 接口，负责选项、调度、状态、日志、结果
+  # runner 真正跑爬虫，把爬虫拉成子进程，日志和状态写回共享卷
+  #
+  # 两个容器之间只走三个 HTTP 接口（起任务、停任务、查代码表），
+  # 状态、日志、结果都靠共享卷传 —— 少一份要同步的状态。
+  #
+  # 注意：web 和 yzw 不要同时跑 —— 两个爬虫会抢 data/schools.json。
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        TZ: "${TZ:-Asia/Shanghai}"
+        USER_ID: "${USER_ID:-1000}"
+        GROUP_ID: "${GROUP_ID:-1000}"
+    image: yzw-spider-web:latest
+    container_name: yzw-spider-web
+    restart: unless-stopped
+    command: ["web.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      # 只在本机 / 内网开放：这个服务没有认证
+      - "${WEB_HOST:-127.0.0.1}:${WEB_PORT:-8000}:8000"
+    volumes:
+      - "${RESULT_DIR:-./result}:/app/result"
+      - "${DATA_DIR:-./data}:/app/data"
+    environment:
+      TZ: "${TZ:-Asia/Shanghai}"
+      YZW_RESULT_DIR: /app/result
+      YZW_DATA_DIR: /app/data
+      # 执行器的地址，compose 里靠服务名互相找到
+      YZW_RUNNER_URL: "http://runner:8001"
+      # 登录态：只走环境变量，不会写进生成的配置文件
+      YZW_COOKIE: "${YZW_COOKIE:-}"
+    depends_on:
+      - runner
+
+  runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        TZ: "${TZ:-Asia/Shanghai}"
+        USER_ID: "${USER_ID:-1000}"
+        GROUP_ID: "${GROUP_ID:-1000}"
+    image: yzw-spider-web:latest
+    container_name: yzw-spider-runner
+    restart: unless-stopped
+    command: ["web.runner:app", "--host", "0.0.0.0", "--port", "8001"]
+    volumes:
+      - "${RESULT_DIR:-./result}:/app/result"
+      - "${DATA_DIR:-./data}:/app/data"
+    environment:
+      TZ: "${TZ:-Asia/Shanghai}"
+      YZW_RESULT_DIR: /app/result
+      YZW_DATA_DIR: /app/data
+      # 登录态：web 那边不传，靠执行器自己读 —— 查专业要用
+      YZW_COOKIE: "${YZW_COOKIE:-}"

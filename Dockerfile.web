@@ -1,0 +1,63 @@
+# 研招网爬虫的 Web 控制台镜像
+#
+#   docker compose build web
+#   docker compose up -d web runner
+#   open http://localhost:8000
+#
+# 一个镜像两个角色，靠 command 区分：
+#   web     —— 对外的页面 + 接口（web.app）
+#   runner  —— 真正跑爬虫的容器（web.runner）
+#
+# 前端在第一个阶段用 node 打包，产物拷进 python 镜像。
+FROM node:22-alpine AS frontend
+
+WORKDIR /build
+
+# 先只拷依赖清单 —— 依赖没变的话这一层能复用缓存
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+
+FROM python:3.13-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# 依赖单独一层，改代码不用重装依赖
+COPY requirements.txt requirements-web.txt ./
+RUN pip install --no-cache-dir -r requirements-web.txt
+
+# 时区：跟爬虫那个镜像一样，由 .env 的 TZ 传进来。
+# 输出文件名里带时间戳，容器默认 UTC 会和本地时间差 8 小时。
+ARG TZ=Asia/Shanghai
+ENV TZ=${TZ}
+RUN ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime \
+    && echo "${TZ}" > /etc/timezone
+
+COPY . .
+
+# 前端打包产物（放在 COPY . . 之后，覆盖掉源码目录里的那份）
+COPY --from=frontend /build/dist ./frontend/dist
+
+# 用普通用户跑，挂到宿主机上的文件才归宿主机用户所有
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+RUN set -eux; \
+    groupadd -g "${GROUP_ID}" yzw 2>/dev/null || true; \
+    useradd -u "${USER_ID}" -g "${GROUP_ID}" -m -d /home/yzw yzw 2>/dev/null || true; \
+    mkdir -p /app/result /app/data; \
+    chown -R "${USER_ID}:${GROUP_ID}" /app
+
+USER yzw
+
+EXPOSE 8000
+
+# 默认起 web；要跑执行器就在 compose 里换 command
+ENTRYPOINT ["uvicorn"]
+CMD ["web.app:app", "--host", "0.0.0.0", "--port", "8000"]

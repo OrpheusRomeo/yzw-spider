@@ -1,0 +1,12 @@
+# Web 控制台的依赖（在 requirements.txt 之外再加这几个）
+#
+#   pip install -r requirements-web.txt
+#
+-r requirements.txt
+
+# 后端框架和服务器
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+
+# web 容器调执行器、执行器访问研招网都用它
+httpx>=0.27,<1

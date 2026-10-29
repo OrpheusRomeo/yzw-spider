@@ -12,5 +12,12 @@
 /result_test*/
 /result*/
 
+# Web 控制台的任务目录（每次任务的配置、日志、状态）
+/data/jobs/
+
+# 前端
+/frontend/node_modules/
+/frontend/dist/
+
 # Docker 相关
 .env

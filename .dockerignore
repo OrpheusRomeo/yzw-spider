@@ -14,6 +14,10 @@ result_test*/
 # 测试不进镜像
 tests/
 
+# 前端的依赖不进镜像（Dockerfile.web 里自己 npm ci 一遍）
+frontend/node_modules/
+frontend/dist/
+
 # 注意：config.yaml 和 data/schools.json 要留在镜像里
 #   config.yaml       默认配置
 #   data/schools.json 院校清单（936 所），少了它容器里第一次跑要先枚举全国
